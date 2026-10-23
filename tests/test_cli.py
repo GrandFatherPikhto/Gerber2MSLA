@@ -94,3 +94,57 @@ def test_grid_takes_its_line_and_gap_in_whole_pixels(tmp_path, screen_args, caps
     assert "line: 3 px -> 300.0 um along X, 300.0 um along Y" in captured.out
     assert "gap: 1 px -> 100.0 um along X, 100.0 um along Y" in captured.out
     assert "is drawn as" not in captured.err
+
+
+# ─────────────── wiring of the command line (plan П5а, new cells) ──────────
+
+def test_a_command_group_without_a_pattern_is_a_usage_error(capsys):
+    """`masks` alone is a usage error, not a silent exit 0 with help."""
+    with pytest.raises(SystemExit) as exc:
+        main(["masks"])
+    assert exc.value.code == 2
+    assert "usage: gerber2msla" in capsys.readouterr().err
+
+
+def test_at_places_the_figure_and_the_report_says_where(tmp_path, screen_args,
+                                                        rect_pixel_args, capsys):
+    """The flag must reach `compose`, not merely be parsed."""
+    run_mask(tmp_path, "square", *screen_args, *rect_pixel_args, "--side-mm", "2",
+             "--line-mm", "0.2", "--at", "1,1", "--no-marker")
+    assert "at 1.000, 1.000 mm from the top-left pixel" in capsys.readouterr().out
+
+
+def test_the_mask_defaults_are_marker_on_and_offs_off():
+    """The report must not need a flag to be honest: the F is on, mirror and invert are off."""
+    args = build_parser().parse_args(
+        ["masks", "bars", "--screen-px", "240x120", "--pixel-um", "34.4x34.4",
+         "-o", "mask.png"])
+    assert args.marker is True
+    assert args.mirror is False
+    assert args.invert is False
+    assert args.at is None
+
+
+def test_both_square_forms_at_once_are_refused(tmp_path, screen_args, square_pixel_args,
+                                                capsys):
+    """The side and the line are millimetres OR whole pixels, never both."""
+    target = tmp_path / "square.png"
+    for arguments in (
+        ["masks", "square", *screen_args, *square_pixel_args, "--side-mm", "2",
+         "--side-px", "40"],
+        ["masks", "square", *screen_args, *square_pixel_args, "--line-mm", "0.2",
+         "--line-px", "6"],
+    ):
+        assert main([*arguments, "-o", str(target)]) == 2
+        assert "not both" in capsys.readouterr().err
+    assert not target.exists()
+
+
+def test_side_px_reaches_the_square_builder(tmp_path, screen_args, rect_pixel_args,
+                                            capsys):
+    """The flag is parsed AND used: 40 px, not a fallback to the 100 mm default."""
+    run_mask(tmp_path, "square", *screen_args, *rect_pixel_args, "--side-px", "40",
+             "--line-px", "2", "--at", "0,0", "--no-marker")
+    out = capsys.readouterr().out
+    assert "drawn: 40 x 40 px" in out
+    assert "1.376 x 1.200 mm" in out, "one count, two physical sides"

@@ -24,8 +24,9 @@ from importlib.metadata import PackageNotFoundError, version
 
 from .masks import Refusal, Screen, add_marker, compose, write_mask
 from .patterns import (DEFAULT_GRID_GAP_MM, DEFAULT_GRID_HEIGHT_MM, DEFAULT_GRID_LINE_MM,
-                       DEFAULT_GRID_WIDTH_MM, DEFAULT_LINES, DEFAULT_WIDTHS_MM, DIRECTIONS,
-                       Width, build_bars, build_grid)
+                       DEFAULT_GRID_WIDTH_MM, DEFAULT_LINES, DEFAULT_SQUARE_LINE_MM,
+                       DEFAULT_SQUARE_SIDE_MM, DEFAULT_WIDTHS_MM, DIRECTIONS, Width,
+                       build_bars, build_grid, build_square)
 
 PROG = "gerber2msla"
 EXIT_OK = 0
@@ -220,6 +221,25 @@ def build_parser() -> argparse.ArgumentParser:
     grid_parser.add_argument("--direction", choices=DIRECTIONS, default="both",
                              help="lines along X, along Y, or both")
     grid_parser.set_defaults(handler=_cmd_grid)
+
+    square_parser = kinds.add_parser(
+        "square", help="a closed contour that measures the pixel of each axis",
+        description="a closed square contour: the side and the line are whole pixels of "
+                    "their own axis, and the report carries the measurement formulas")
+    common(square_parser)
+    square_parser.add_argument("--side-mm", type=_positive_mm, default=None,
+                               help="side of the square in mm, one value for both axes "
+                                    f"(default {DEFAULT_SQUARE_SIDE_MM:g}; the laser's 150 mm "
+                                    "does not fit this screen)")
+    square_parser.add_argument("--side-px", type=_whole_pixels, default=None,
+                               help="side in WHOLE pixels of the screen, both axes "
+                                    "(excludes --side-mm)")
+    square_parser.add_argument("--line-mm", type=_positive_mm, default=None,
+                               help=f"line width in mm (default {DEFAULT_SQUARE_LINE_MM:g})")
+    square_parser.add_argument("--line-px", type=_whole_pixels, default=None,
+                               help="line width in WHOLE pixels of the screen, both axes "
+                                    "(excludes --line-mm)")
+    square_parser.set_defaults(handler=_cmd_square)
     return parser
 
 
@@ -263,6 +283,23 @@ def _cmd_grid(args: argparse.Namespace) -> int:
     gap = _one_width(args.gap_mm, args.gap_px, DEFAULT_GRID_GAP_MM,
                      "--gap-mm", "--gap-px")
     figure = build_grid(screen, args.width_mm, args.height_mm, line, gap, args.direction)
+    return _emit(args, screen, figure)
+
+
+def _cmd_square(args: argparse.Namespace) -> int:
+    """One side value for both axes; the core takes side_x and side_y (plan П5б)."""
+    screen = _screen(args)
+    if args.side_mm is not None and args.side_px is not None:
+        raise Refusal("use either --side-mm or --side-px, not both")
+    if args.side_px is not None:
+        side_x_mm = args.side_px * screen.pixel_x_mm
+        side_y_mm = args.side_px * screen.pixel_y_mm
+    else:
+        side_x_mm = side_y_mm = (DEFAULT_SQUARE_SIDE_MM if args.side_mm is None
+                                 else args.side_mm)
+    line = _one_width(args.line_mm, args.line_px, DEFAULT_SQUARE_LINE_MM,
+                      "--line-mm", "--line-px")
+    figure = build_square(screen, side_x_mm, side_y_mm, line)
     return _emit(args, screen, figure)
 
 

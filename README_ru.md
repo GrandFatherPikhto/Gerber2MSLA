@@ -14,15 +14,42 @@
 
 ## Тестовые маски
 
+```
+gerber2msla masks bars   --screen-px WxH --pixel-um PXxPY -o out/bars.png \
+                         [--widths-mm 0.2,0.15,0.1 | --widths-px 6,5,4,3,2,1] \
+                         [--lines 5] [--at X,Y] [--mirror] [--invert] [--marker|--no-marker]
+gerber2msla masks grid   --screen-px WxH --pixel-um PXxPY -o out/grid.png \
+                         [--width-mm 50 --height-mm 40] [--line-mm 0.2 | --line-px 6] \
+                         [--gap-mm 0.15 | --gap-px 4] [--direction both|x|y] …
+gerber2msla masks square --screen-px WxH --pixel-um PXxPY -o out/square.png \
+                         [--side-mm 100 | --side-px N] [--line-mm 0.2 | --line-px 6] …
+```
+
+`--screen-px` и `--pixel-um` **обязательны и без умолчаний**: выдуманное число хуже отказа.
+Для Anycubic Photon Mono X 6Ks профиль принтера в UVtools (и `Anycubic Photon Mono X 6Ks.ini`
+от PrusaSlicer) говорит 195.84 x 122.4 мм на 5760 x 3600 px, то есть **34 мкм на пиксель** —
+это ПРОФИЛЬ, а не проверенный паспорт и не замер. Настоящий пиксель меряется квадратом
+(ниже), по каждой оси отдельно.
+
 ```sh
 .venv/bin/gerber2msla masks bars --screen-px 5760x3600 --pixel-um 34x34 \
     -o out/bars.png --widths-px 6,5,4,3,2,1
 .venv/bin/gerber2msla masks grid --screen-px 5760x3600 --pixel-um 34x34 \
     -o out/grid.png --width-mm 50 --height-mm 40 --line-px 6 --gap-px 4
+.venv/bin/gerber2msla masks square --screen-px 5760x3600 --pixel-um 34x34 \
+    -o out/square.png --side-mm 100 --line-mm 0.2
 ```
 
-* `--screen-px` и `--pixel-um` **обязательны**: выдуманное число хуже отказа. Пиксель
-  может быть неквадратным — две величины, по оси.
+* Пиксель может быть неквадратным — две величины, по оси.
+* `bars` — группы линий с промежутком, равным ширине: горизонтальный блок (разрешение по Y)
+  и вертикальный (по X), каждый квадратный, чтобы оси были сравнимы;
+* `grid` — прямоугольник, заполненный линиями: первая линия вплотную к ближнему краю,
+  линия только целиком, остаток у дальнего края — промежуток;
+* `square` — замкнутый контур; сторона (по умолчанию 100 мм — лазерные 150 мм на этот
+  экран не влезают) и линия — целые пиксели СВОЕЙ оси. Отчёт печатает
+  `pixel_um_x = measured_x_mm / n_x * 1000` (и Y) с числами этого заказа: измерь обе
+  стороны штангенциркулем и подставь результат в `--pixel-um`. Диагонали — только проверка
+  замера (`d1 = d2` ожидается): у жёсткой сетки экрана перекоса нет, есть масштаб;
 * каждая ширина становится `n = round(ширина / шаг)` пикселей СВОЕЙ оси, и отчёт печатает
   запрошенную ширину рядом с ФАКТИЧЕСКОЙ: 0.100 мм на пикселе 34 мкм — это 3 px =
   0.102 мм. Именно фактическое число и будет на пластине.

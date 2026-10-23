@@ -26,6 +26,8 @@ import pytest
 
 from conftest import pixels, run_mask, runs_of_figure
 
+from gerber2msla.cli import main
+
 
 def test_a_width_is_whole_pixels_of_its_own_axis(tmp_path, screen_args, rect_pixel_args):
     """A non-square pixel: 0.2 mm is 6 px across and 7 px down, not one number twice.
@@ -170,3 +172,82 @@ def test_a_millimetre_request_announces_a_deviation_over_ten_percent(
         assert expected in err
         assert f"{width_mm} mm along Y is drawn as" in err
         assert f"{width_mm} mm along X is drawn as" in err
+
+
+# ─────────────────────────── square (plan П5а) ─────────────────────────────
+
+def test_the_square_is_a_closed_contour_of_whole_pixels(tmp_path, screen_args,
+                                                        rect_pixel_args):
+    """2 mm of a 34.4 x 30 um pixel: 58 px across, 67 px down, strokes 6 x 7 px.
+
+    The picture, not the report: the four strokes are read off the PNG placed at 0,0.
+    """
+    target = run_mask(tmp_path, "square", *screen_args, *rect_pixel_args,
+                      "--side-mm", "2", "--line-mm", "0.2", "--at", "0,0",
+                      "--no-marker")
+    screen = pixels(target)
+    rows = np.nonzero(screen.any(axis=1))[0]
+    cols = np.nonzero(screen.any(axis=0))[0]
+    drawn = (int(rows[-1] - rows[0] + 1), int(cols[-1] - cols[0] + 1))
+    assert drawn == (67, 58), "the side is whole pixels of each axis"
+    array = screen[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
+    assert array[:7, :].all(), "the near edge is a full-width stroke, 7 px tall"
+    assert array[-7:, :].all(), "the far edge is closed"
+    assert array[:, :6].all(), "the left edge is a 6 px stroke"
+    assert array[:, -6:].all(), "the right edge is closed"
+    assert not array[7:-7, 6:-6].any(), "inside the contour is black"
+
+
+def test_a_square_side_below_two_line_widths_is_refused(tmp_path, screen_args,
+                                                        rect_pixel_args, capsys):
+    """A 0.4 mm side with a 0.2 mm line is a solid block, not a contour."""
+    target = tmp_path / "square.png"
+    assert main(["masks", "square", *screen_args, *rect_pixel_args, "--side-mm", "0.4",
+                 "--line-mm", "0.2", "-o", str(target)]) == 2
+    err = capsys.readouterr().err
+    assert "solid, not a contour" in err
+    assert "0.400 x 0.400 mm" in err and "0.200 mm" in err
+    assert "12 x 13 px" in err and "6 x 7 px" in err
+    assert not target.exists()
+
+
+def test_a_square_that_does_not_fit_is_refused_in_millimetres_and_pixels(
+        tmp_path, screen_args, rect_pixel_args, capsys):
+    target = tmp_path / "square.png"
+    assert main(["masks", "square", *screen_args, *rect_pixel_args, "--side-mm", "10",
+                 "--line-mm", "0.2", "-o", str(target)]) == 2
+    err = capsys.readouterr().err
+    assert "does not fit" in err
+    assert "mm" in err and "px" in err
+    assert not target.exists()
+
+
+def test_a_square_request_in_whole_pixels_is_the_same_count_on_both_axes(
+        tmp_path, screen_args, rect_pixel_args, capsys):
+    """40 px is 40 on each axis — two DIFFERENT physical sides on a 34.4 x 30 pixel."""
+    target = run_mask(tmp_path, "square", *screen_args, *rect_pixel_args,
+                      "--side-px", "40", "--line-px", "2", "--at", "0,0",
+                      "--no-marker")
+    captured = capsys.readouterr()
+    assert "drawn: 40 x 40 px" in captured.out
+    assert "1.376 x 1.200 mm" in captured.out, "one count, two physical sides"
+    assert "strokes 2 x 2 px" in captured.out
+    assert "is drawn as" not in captured.err, "a pixel request cannot deviate from itself"
+    screen = pixels(target)
+    rows = np.nonzero(screen.any(axis=1))[0]
+    cols = np.nonzero(screen.any(axis=0))[0]
+    drawn = (int(rows[-1] - rows[0] + 1), int(cols[-1] - cols[0] + 1))
+    assert drawn == (40, 40), "the same pixel count on each axis"
+
+
+def test_the_square_report_carries_the_pixel_formulas(tmp_path, screen_args,
+                                                      rect_pixel_args, capsys):
+    """The formula is printed WITH this order's numbers, ready to divide the measurement."""
+    run_mask(tmp_path, "square", *screen_args, *rect_pixel_args,
+             "--side-mm", "2", "--line-mm", "0.2")
+    out = capsys.readouterr().out
+    assert "pixel_um_x = measured_x_mm / 58 * 1000" in out
+    assert "pixel_um_y = measured_y_mm / 67 * 1000" in out
+    assert "measure both sides with calipers" in out
+    assert "d1 = d2 expected" in out
+    assert "theta" not in out, "the LCD grid has no skew: no skew formula"

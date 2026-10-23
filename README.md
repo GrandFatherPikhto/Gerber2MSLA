@@ -14,15 +14,42 @@ converter (PNG to `.px6s`) is the next step of the plan
 
 ## Test masks
 
+```
+gerber2msla masks bars   --screen-px WxH --pixel-um PXxPY -o out/bars.png \
+                         [--widths-mm 0.2,0.15,0.1 | --widths-px 6,5,4,3,2,1] \
+                         [--lines 5] [--at X,Y] [--mirror] [--invert] [--marker|--no-marker]
+gerber2msla masks grid   --screen-px WxH --pixel-um PXxPY -o out/grid.png \
+                         [--width-mm 50 --height-mm 40] [--line-mm 0.2 | --line-px 6] \
+                         [--gap-mm 0.15 | --gap-px 4] [--direction both|x|y] …
+gerber2msla masks square --screen-px WxH --pixel-um PXxPY -o out/square.png \
+                         [--side-mm 100 | --side-px N] [--line-mm 0.2 | --line-px 6] …
+```
+
+`--screen-px` and `--pixel-um` are **mandatory and have no defaults**: an invented number is
+worse than a refusal. For the Anycubic Photon Mono X 6Ks the printer profile in UVtools (and
+PrusaSlicer's `Anycubic Photon Mono X 6Ks.ini`) says 195.84 x 122.4 mm over 5760 x 3600 px,
+i.e. **34 um per pixel** — that is a PROFILE, not a verified spec sheet and not a
+measurement. The real pixel is measured with the `square` (see below), one axis at a time.
+
 ```sh
 .venv/bin/gerber2msla masks bars --screen-px 5760x3600 --pixel-um 34x34 \
     -o out/bars.png --widths-px 6,5,4,3,2,1
 .venv/bin/gerber2msla masks grid --screen-px 5760x3600 --pixel-um 34x34 \
     -o out/grid.png --width-mm 50 --height-mm 40 --line-px 6 --gap-px 4
+.venv/bin/gerber2msla masks square --screen-px 5760x3600 --pixel-um 34x34 \
+    -o out/square.png --side-mm 100 --line-mm 0.2
 ```
 
-* `--screen-px` and `--pixel-um` are **mandatory**: an invented number is worse than a
-  refusal. The pixel may be not square — two sizes, one per axis.
+* The pixel may be not square — two sizes, one per axis.
+* `bars` — groups of lines with the gap equal to the line width: a horizontal block (the Y
+  resolution) and a vertical block (the X resolution), each square so the two axes compare;
+* `grid` — a rectangle filled with lines: the first line is flush with the near edge, a line
+  is drawn only whole, the leftover at the far edge is a gap;
+* `square` — a closed contour; the side (100 mm by default — the laser's 150 mm does not fit
+  this screen) and the line are whole pixels of their OWN axis. The report prints
+  `pixel_um_x = measured_x_mm / n_x * 1000` (and Y) with this order's numbers: measure both
+  sides with calipers and type the result into `--pixel-um`. The diagonals only check the
+  measurement (`d1 = d2` expected) — the LCD grid has no skew, only a scale;
 * every width becomes `n = round(width / pitch)` pixels of its OWN axis, and the report
   prints the requested width beside the ACTUAL one: a 0.100 mm line on a 34 um pixel is
   3 px = 0.102 mm. That actual number is the one to expect on the plate.

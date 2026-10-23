@@ -1,15 +1,12 @@
 # gerber2msla/patterns.py
-"""Test patterns for an MSLA printer, in exact screen pixels: `bars` and `grid`.
+"""Test patterns for an MSLA printer, in exact screen pixels: `bars`, `grid`, `square`.
 
-COPIED from Gerber2LDI `tools/msla_tests.py` at commit 364fd28 (2026-10-23) — the last
-commit that touched the mask files and their cells. Behaviour is unchanged; the command
-line (`gerber2msla masks bars|grid`) lives in `cli.py`, and the drawing layer (screen
-pixels, the marker, the PNG) in `masks.py`. Gerber2LDI keeps its copy until the separate
-move-out task there, after this one is accepted.
-
-The printer exposes a WHOLE LAYER through an LCD, so the mask decides the result, and an
-LCD can only light whole pixels: a test pattern has to be drawn in pixels and has to say
-what each requested width actually became.
+`bars` and `grid` are COPIED from Gerber2LDI `tools/msla_tests.py` at commit 364fd28
+(2026-10-23) — the last commit that touched the mask files and their cells; behaviour is
+unchanged, the command line lives in `cli.py`, the drawing layer in `masks.py`. `square` is
+NEW (plan `png2px6s`, П5а): the laser's square measures skew and scale through the machine
+profile, while a rigid LCD grid has no skew — what it does have is a scale, so the square
+measures the REAL pixel of each axis.
 
 PATTERNS (the layout is the label: there is no caption on a mask)
 
@@ -22,11 +19,17 @@ PATTERNS (the layout is the label: there is no caption on a mask)
          line is drawn only WHOLE, the leftover at the far edge is a gap, and `both`
          draws the union of the two directions — the same rule as `patterns/grid.py`
          of Gerber2LDI.
+  square — a CLOSED contour of one line width, side_x by side_y. The side and the line
+         are whole pixels of their OWN axis, so on a non-square pixel one millimetre
+         request is two pixel counts. The report carries the formulas with this order's
+         numbers: pixel_um = measured_mm / n * 1000. The diagonals only check the
+         measurement (d1 = d2 expected); there is no skew formula, because the LCD grid
+         has no skew.
 
 A width may be asked for in MILLIMETRES or in WHOLE PIXELS of the screen (`--widths-px`,
-`--line-px`, `--gap-px`); the two forms exclude each other. The pixel form is exactly what
-will be drawn — `n` pixels of EACH axis, so on a non-square pixel one number is two
-physical widths — and carries no deviation warning, because there is no millimetre
+`--line-px`, `--gap-px`, `--side-px`); the two forms exclude each other. The pixel form is
+exactly what will be drawn — `n` pixels of EACH axis, so on a non-square pixel one number
+is two physical widths — and carries no deviation warning, because there is no millimetre
 request to be off from. A millimetre request is drawn at the nearest whole pixel and
 announces the difference when it is coarser than 10 %: «0.050 mm along Y is drawn as
 34.0 um (-32 %)».
@@ -47,6 +50,9 @@ DEFAULT_GRID_WIDTH_MM = 50.0
 DEFAULT_GRID_HEIGHT_MM = 40.0
 DEFAULT_GRID_LINE_MM = 0.2
 DEFAULT_GRID_GAP_MM = 0.15
+DEFAULT_SQUARE_SIDE_MM = 100.0
+"""The laser's 150 mm square does not fit: this screen is 122.4 mm high."""
+DEFAULT_SQUARE_LINE_MM = 0.2
 BLOCK_GAP_MM = 2.0
 """Physical gap between the horizontal and the vertical block of `bars`, in mm."""
 DIRECTIONS = ("both", "x", "y")
@@ -238,6 +244,49 @@ def build_grid(screen: Screen, width_mm: float, height_mm: float, line: Width,
         _deviation(line, line_y, screen.pixel_y_mm, "Y") if along_x else None,
         _deviation(gap, gap_x, screen.pixel_x_mm, "X") if along_y else None,
         _deviation(gap, gap_y, screen.pixel_y_mm, "Y") if along_x else None,
+    ) if text]
+    return Figure(pixels=figure,
+                  report=tuple(report) + tuple(f"warning: {text}" for text in warnings))
+
+
+def build_square(screen: Screen, side_x_mm: float, side_y_mm: float, line: Width) -> Figure:
+    """A CLOSED contour: four strokes, side_x by side_y, in whole pixels of each axis.
+
+    The two sides are separate arguments so that the plate frame (plan П5б) can be a
+    rectangle with the same rule; the single `square` command passes one value twice.
+    """
+    n_x = _quantised(side_x_mm, screen.pixel_x_mm, "X", "the square side")
+    n_y = _quantised(side_y_mm, screen.pixel_y_mm, "Y", "the square side")
+    w_x = _width_pixels(line, screen.pixel_x_mm, "X", "the line")
+    w_y = _width_pixels(line, screen.pixel_y_mm, "Y", "the line")
+    if n_x <= 2 * w_x or n_y <= 2 * w_y:
+        raise Refusal(
+            f"the square {side_x_mm:.3f} x {side_y_mm:.3f} mm with a {line.label} line is "
+            f"solid, not a contour: {n_x} x {n_y} px with {w_x} x {w_y} px strokes — the "
+            f"side must exceed two line widths on EACH axis")
+
+    figure = np.zeros((n_y, n_x), dtype=np.uint8)
+    figure[0:w_y, :] = WHITE                  # the near edge, full width
+    figure[n_y - w_y:, :] = WHITE             # the far edge
+    figure[:, 0:w_x] = WHITE                  # the left edge
+    figure[:, n_x - w_x:] = WHITE             # the right edge
+
+    report = [
+        f"pattern: square, side {side_x_mm:.3f} x {side_y_mm:.3f} mm, line {line.label}",
+        f"drawn: {n_x} x {n_y} px = {screen.mm_x(n_x):.3f} x {screen.mm_y(n_y):.3f} mm, "
+        f"strokes {w_x} x {w_y} px",
+        "measure both sides with calipers: the square measures the REAL pixel of each axis "
+        "(the printer profile is not a spec sheet)",
+        f"pixel_um_x = measured_x_mm / {n_x} * 1000",
+        f"pixel_um_y = measured_y_mm / {n_y} * 1000",
+        "diagonals: d1 = d2 expected; a difference is a measurement error or the plate "
+        "moved during the exposure",
+    ]
+    warnings = [text for text in (
+        _deviation(Width(mm=side_x_mm), n_x, screen.pixel_x_mm, "X"),
+        _deviation(Width(mm=side_y_mm), n_y, screen.pixel_y_mm, "Y"),
+        _deviation(line, w_x, screen.pixel_x_mm, "X"),
+        _deviation(line, w_y, screen.pixel_y_mm, "Y"),
     ) if text]
     return Figure(pixels=figure,
                   report=tuple(report) + tuple(f"warning: {text}" for text in warnings))
