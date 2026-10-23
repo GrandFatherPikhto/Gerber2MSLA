@@ -117,16 +117,31 @@ write_file       шаблон -> Written -> файл; возвращает пу�
 `LightPWM` в файл не пишется: в v517 такого поля нет, и отчёт говорит это словами.
 Флага зеркала в файле тоже нет: `--mirror-x` — решение оператора.
 
-## CLI — три модуля (П2, П3)
+## Серия по времени — `gerber2msla/dose.py` (П5в)
+
+```
+times_from_list(text)              "15,20,25" -> времена; повтор времени — отказ
+times_from_series(start, stop, n)  n времён от start до stop, ratio = (stop/start)^(1/(n−1));
+                                   COUNT ≥ 2, START < STOP, конечные и > 0
+times_from_series_args(values)     разбор слов `--series START STOP COUNT`
+series_file(prefix, seconds)       out/dose + 25 -> out/dose_25.0s.px6s
+check_names(prefix, times)         два времени с одним именем после округления — отказ
+write_series(template, mask, prefix, times)
+                                   файл на каждое время ТЕМ ЖЕ писателем; имя и содержимое
+                                   берут один и тот же слот лесенки
+report(files)                      таблица «файл → обычное и нижнее», прочитанная ИЗ файлов
+```
+
+## CLI — три модуля (П2, П3, П5в)
 
 ```
 cli.py        корень: prog, --version, сборка подкоманд, ловля Refusal/Px6sError, код 2
 cli_masks.py  группа `masks`: bars, grid, square, plate (перенесена без изменения флагов)
 cli_px6s.py   `write`: маска PNG -> write_file -> отчёт; `dump`: read_file -> строки
-              -> stdout, по `-o` слой 0 в PNG
+              -> stdout, по `-o` слой 0 в PNG; `dose`: времена -> dose.write_series -> таблица
 ```
 
-Маски НЕ переезжают в px6s-модуль: разделение — «маски здесь, write/dump там».
+Маски НЕ переезжают в px6s-модуль: разделение — «маски здесь, write/dump/dose там».
 
 ## Команда `dump` — `gerber2msla/cli_px6s.py` (П3)
 

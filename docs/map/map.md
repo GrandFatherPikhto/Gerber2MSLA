@@ -25,8 +25,9 @@ Gerber2MSLA, 23.10.2026, по образцу Gerber2LDI `docs/map/map.md`. «П�
 | ширина из заказа в пиксели | `gerber2msla/patterns.py:79` (`_width_pixels`) | есть | пиксельный заказ — ровно `n`; мм — через `_quantised` |
 | отклонение мм-заказа больше 10 % | `gerber2msla/patterns.py:101` (`_deviation`) | есть | порог строгий (`> 0.10`); у пиксельного заказа отклонения нет |
 | две ширины в одно `n` | `gerber2msla/patterns.py:115` (`_duplicates`) | есть | предупреждение, не отказ |
-| разбор командной строки | `gerber2msla/cli.py:38` (`build_parser`), `gerber2msla/cli_masks.py:165` (`add_parser`), `gerber2msla/cli_px6s.py:53` (`add_parser`) | есть | корень и `--version` — в `cli.py`; маски — `cli_masks.py`; файл принтера (`write`, `dump`) — `cli_px6s.py`; маски НЕ уезжают в px6s-модуль |
-| печать прочитанного файла принтера | `gerber2msla/cli_px6s.py:92` (`_dump_lines`), `:121` (`_cmd_dump`) | есть | `dump` только печатает поля читателя и, по `-o`, сохраняет слой 0; формат не толкует, байтовых знаний не добавляет |
+| разбор командной строки | `gerber2msla/cli.py:38` (`build_parser`), `gerber2msla/cli_masks.py:165` (`add_parser`), `gerber2msla/cli_px6s.py:64` (`add_parser`) | есть | корень и `--version` — в `cli.py`; маски — `cli_masks.py`; файл принтера (`write`, `dump`, `dose`) — `cli_px6s.py`; маски НЕ уезжают в px6s-модуль |
+| печать прочитанного файла принтера | `gerber2msla/cli_px6s.py:120` (`_dump_lines`), `:149` (`_cmd_dump`) | есть | `dump` только печатает поля читателя и, по `-o`, сохраняет слой 0; формат не толкует, байтовых знаний не добавляет |
+| времена серии: список ИЛИ геометрия | `gerber2msla/dose.py:38` (`times_from_list`), `:55` (`times_from_series`), `:87` (`check_names`), `:98` (`write_series`), `gerber2msla/cli_px6s.py:162` (`_cmd_dose`) | есть | обе формы сразу — отказ; повтор времени, плоская/падающая серия, два времени с одним именем после округления — отказ; каждый файл пишет ТОТ ЖЕ писатель, имя несёт время; отчёт читается из файлов |
 | отчёт команды маски | `gerber2msla/cli_masks.py:371` (`_emit`), `:379` (`_finish`) | есть | предупреждения — строки в stderr, остальной отчёт — в stdout, последняя строка — путь и размер экрана |
 | отказ одной строкой, код 2 | `gerber2msla/cli.py:50` (`main`) | есть | ловит `Refusal` и `Px6sError`, без трассировки; файл результата не появляется |
 | имя и версия утилиты | `gerber2msla/cli.py:35` (`_version`) | есть | `gerber2msla <version>`; без установленных метаданных — `unknown` |
@@ -61,6 +62,11 @@ gerber2msla dump file.px6s [-o layer.png]
   cli_px6s: read_file -> _dump_lines -> stdout (версия, станок, разрешение и пиксель, оба
             времени, нижние слои и слои, подъёмы и скорости, адреса блоков); -o -> слой 0 PNG
             — оракул круга PNG → px6s → PNG
+gerber2msla dose MASK.png --template real.px6s -o out/dose --exposure-s 15,20,25
+gerber2msla dose MASK.png --template real.px6s -o out/dose --series 15 35 5
+  dose: лесенка времён (список ИЛИ геометрия) -> имя {prefix}_{s:.1f}s.px6s ->
+        write_file на каждое время (второго пути записи нет)
+  stdout: таблица «файл → обычное и нижнее» из ПРОЧИТАННЫХ файлов + сколько записано
 ```
 
 Круг проверки: PNG → `.px6s` → `dump` → PNG пиксель в пиксель; поля, которые не должны меняться, — байт в

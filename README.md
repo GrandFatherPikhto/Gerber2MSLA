@@ -125,6 +125,25 @@ tool talks to the printer.
   own exposure time and the header's bottom time are both printed, so the one-layer trap
   above can be seen in the file itself.
 
+## Dose series
+
+```sh
+.venv/bin/gerber2msla dose out/plate.png --template real.px6s -o out/dose \
+    --exposure-s 15,20,25,30,35
+.venv/bin/gerber2msla dose out/plate.png --template real.px6s -o out/dose --series 15 35 5
+```
+
+* a layer has ONE exposure time for the whole picture, so the ladder is a set of FILES: the
+  same mask, one file per time. The name carries the time — `out/dose_25.0s.px6s`;
+* two forms, never both: an explicit list, or a geometric series
+  `ratio = (stop/start)**(1/(count-1))` — dose acts by multiplication, so equal steps in
+  TIME are not equal steps in dose (the same arithmetic as Gerber2LDI's dose strip);
+* every file goes through the same writer as `write`: the machine blocks stay byte for byte,
+  and both times in each file are that file's own time (layer 0 IS the bottom layer);
+* the report is the table «file → normal and bottom time», read back FROM the files;
+* a repeated time, a flat or falling series, or two times that round to one file name are
+  refused: one silently lost level is worse than no series at all.
+
 ## Install (development)
 
 ```sh

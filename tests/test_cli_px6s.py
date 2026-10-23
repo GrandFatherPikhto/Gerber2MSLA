@@ -1,4 +1,4 @@
-"""The printer-file command line: `write` and `dump`.
+"""The printer-file command line: `write`, `dump` and `dose`.
 
 The `write` cell moved here from `tests/test_cli.py` in the П2 fix, unchanged: a module's
 cells live in the file of that module (`gerber2msla/cli_px6s.py`). The `dump` cells (П3)
@@ -130,3 +130,106 @@ def test_dump_refuses_a_file_that_is_not_px6s(tmp_path, capsys):
     assert "not a px6s" in err
     assert "Traceback" not in err
     assert not target.exists()
+
+
+# ───────────────────────────── the dose series (П5в) ───────────────────────
+
+def _mask(tmp_path, template: Path) -> Path:
+    """A full-size mode-L mask without drawing one: dump the template's own layer out."""
+    mask = tmp_path / "mask.png"
+    assert main(["dump", str(template), "-o", str(mask)]) == 0
+    return mask
+
+
+def _dose(tmp_path, template: Path, mask: Path, *arguments: str) -> tuple[Path, ...]:
+    """Run `dose` into `tmp_path/dose_*` and return the files, in name order."""
+    assert main(["dose", str(mask), "--template", str(template), "-o", str(tmp_path / "dose"),
+                 *arguments]) == 0
+    return tuple(sorted(tmp_path.glob("dose_*.px6s")))
+
+
+def test_dose_writes_one_file_per_time(tmp_path, capsys):
+    template = _template()
+    files = _dose(tmp_path, template, _mask(tmp_path, template), "--exposure-s", "15,20,25")
+    assert [path.name for path in files] == ["dose_15.0s.px6s", "dose_20.0s.px6s",
+                                            "dose_25.0s.px6s"]
+    capsys.readouterr()
+
+
+def test_the_name_of_every_dose_file_is_the_time_inside_it(tmp_path, capsys):
+    """The name must match BOTH times in the file — a shifted index would lie in the name."""
+    template = _template()
+    files = _dose(tmp_path, template, _mask(tmp_path, template), "--exposure-s", "15,20,25")
+    capsys.readouterr()
+    for path, seconds in zip(files, (15.0, 20.0, 25.0), strict=True):
+        assert path.name == f"dose_{seconds:.1f}s.px6s"
+        assert main(["dump", str(path)]) == 0
+        out = capsys.readouterr().out
+        assert f"exposure: normal {seconds:.3f} s, bottom {seconds:.3f} s" in out
+
+
+def test_every_dose_file_dumps_the_same_layer(tmp_path, capsys):
+    """One mask, one layer: only the time differs from file to file."""
+    template = _template()
+    mask = _mask(tmp_path, template)
+    files = _dose(tmp_path, template, mask, "--exposure-s", "15,25")
+    capsys.readouterr()
+    mask_pixels = np.array(Image.open(mask))
+    for path in files:
+        layer = tmp_path / f"{path.stem}.png"
+        assert main(["dump", str(path), "-o", str(layer)]) == 0
+        assert np.array_equal(np.array(Image.open(layer)), mask_pixels), path.name
+
+
+def test_the_dose_report_is_a_file_to_time_table(tmp_path, capsys):
+    """The table names the file and BOTH times read back from it; the mask dump is above."""
+    template = _template()
+    files = _dose(tmp_path, template, _mask(tmp_path, template), "--exposure-s", "15,25")
+    lines = capsys.readouterr().out.splitlines()
+    header = next((index for index, line in enumerate(lines)
+                   if line.split() == ["file", "normal", "bottom"]), None)
+    assert header is not None, "the table needs its header"
+    for offset, (path, seconds) in enumerate(zip(files, (15.0, 25.0), strict=True), start=1):
+        row = lines[header + offset]
+        assert row.startswith(str(path))
+        assert row.split()[1:] == [f"{seconds:.3f}", "s", f"{seconds:.3f}", "s"]
+    assert "Wrote 2 files:" in "\n".join(lines)
+
+
+def test_the_series_form_makes_the_geometric_ladder(tmp_path, capsys):
+    """15 ... 35 in five levels: ratio (35/15)^(1/4), the names carry the rounded times."""
+    template = _template()
+    files = _dose(tmp_path, template, _mask(tmp_path, template), "--series", "15", "35", "5")
+    assert [path.name for path in files] == ["dose_15.0s.px6s", "dose_18.5s.px6s",
+                                            "dose_22.9s.px6s", "dose_28.3s.px6s",
+                                            "dose_35.0s.px6s"]
+    capsys.readouterr()
+
+
+def test_both_series_forms_at_once_are_refused(tmp_path, capsys):
+    template = _template()
+    mask = _mask(tmp_path, template)
+    assert main(["dose", str(mask), "--template", str(template), "-o", str(tmp_path / "dose"),
+                 "--exposure-s", "15,20", "--series", "15", "35", "5"]) == 2
+    assert "not both" in capsys.readouterr().err
+    assert list(tmp_path.glob("dose_*.px6s")) == []
+
+
+def test_a_dose_without_times_is_refused(tmp_path, capsys):
+    template = _template()
+    mask = _mask(tmp_path, template)
+    assert main(["dose", str(mask), "--template", str(template), "-o", str(tmp_path / "dose")]) == 2
+    assert "needs its times" in capsys.readouterr().err
+    assert list(tmp_path.glob("dose_*.px6s")) == []
+
+
+def test_duplicate_times_are_refused(tmp_path, capsys):
+    """15,15 would write one file twice and lose a level: argparse refuses it as a usage error."""
+    template = _template()
+    mask = _mask(tmp_path, template)
+    with pytest.raises(SystemExit) as exc:
+        main(["dose", str(mask), "--template", str(template), "-o", str(tmp_path / "dose"),
+              "--exposure-s", "15,15"])
+    assert exc.value.code == 2
+    assert "repeated time" in capsys.readouterr().err
+    assert list(tmp_path.glob("dose_*.px6s")) == []

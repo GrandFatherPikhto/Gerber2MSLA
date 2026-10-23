@@ -1,10 +1,11 @@
-"""The printer-file commands: ``gerber2msla write …`` and ``gerber2msla dump …``.
+"""The printer-file commands: ``write``, ``dump`` and ``dose``.
 
 `write` is thin: read the mask PNG, hand it to `px6s_write.write_file`, print the report.
 `dump` is the other direction: print what `px6s.read_file` already parsed and, on request,
-save layer 0 as a PNG. Everything about the format lives in `px6s.py` and
-`px6s_write.py`; nothing about geometry is decided here and no byte-level knowledge is
-added — the format is described in `docs/format_px6s.md`.
+save layer 0 as a PNG. `dose` writes one file per exposure time from ONE mask; the ladder
+itself — the list, the geometric series and the file names — lives in `dose.py`. Everything
+about the format lives in `px6s.py` and `px6s_write.py`; nothing about geometry is decided
+here and no byte-level knowledge is added — the format is `docs/format_px6s.md`.
 
 Refusals are expected answers, printed by `cli.main` as ONE line with code 2: a mask of the
 wrong size or mode, values other than 0/255, a template that is not a version-517 px6s, a
@@ -19,11 +20,21 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .dose import report as dose_report
+from .dose import times_from_list, times_from_series_args, write_series
 from .masks import Refusal
 from .px6s import Px6sFile, read_file
 from .px6s_write import write_file
 
 EXIT_OK = 0
+
+
+def _times_list(text: str) -> tuple[float, ...]:
+    """argparse type: the explicit ladder ``15,20,25``; the rules live in `dose.py`."""
+    try:
+        return times_from_list(text)
+    except Refusal as refusal:
+        raise argparse.ArgumentTypeError(str(refusal)) from None
 
 
 def _positive_seconds(text: str) -> float:
@@ -79,6 +90,23 @@ def add_parser(commands: argparse._SubParsersAction) -> None:
                              help="save layer 0 here as an 8-bit grey PNG")
     dump_parser.set_defaults(handler=_cmd_dump)
 
+    dose_parser = commands.add_parser(
+        "dose", help="one mask, a series of files, one exposure time each",
+        description="write a series of one-layer files from ONE mask: the same layer in every "
+                    "file, its own exposure time per file, the name carries the time")
+    dose_parser.add_argument("mask", help="mask PNG, exactly the template's resolution, "
+                                          "mode L, 0/255")
+    dose_parser.add_argument("--template", required=True,
+                             help="one-layer px6s of this printer, version 517")
+    dose_parser.add_argument("-o", "--output", required=True,
+                             help="prefix of the files: out/dose -> out/dose_25.0s.px6s")
+    dose_parser.add_argument("--exposure-s", type=_times_list, default=None,
+                             help="explicit times in seconds, comma separated: 15,20,25")
+    dose_parser.add_argument("--series", nargs=3, default=None,
+                             metavar=("START", "STOP", "COUNT"),
+                             help="geometric series: first time, last time, how many levels")
+    dose_parser.set_defaults(handler=_cmd_dose)
+
 
 def _cmd_write(args: argparse.Namespace) -> int:
     mask = _read_mask(args.mask)
@@ -128,6 +156,24 @@ def _cmd_dump(args: argparse.Namespace) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         Image.fromarray(image).save(target)
         print(f"Wrote {target}: {image.shape[1]} x {image.shape[0]} px layer 0")
+    return EXIT_OK
+
+
+def _cmd_dose(args: argparse.Namespace) -> int:
+    """One mask, one file per time; the table is read back from the files themselves."""
+    mask = _read_mask(args.mask)
+    if args.exposure_s is not None and args.series is not None:
+        raise Refusal("use either --exposure-s or --series, not both")
+    if args.exposure_s is not None:
+        times = args.exposure_s
+    elif args.series is not None:
+        times = times_from_series_args(args.series)
+    else:
+        raise Refusal("the series needs its times: --exposure-s 15,20,25 "
+                      "or --series 15 35 5")
+    files = write_series(args.template, mask, args.output, times)
+    print("\n".join(dose_report(files)))
+    print(f"Wrote {len(files)} files: {files[0]} ... {files[-1]}")
     return EXIT_OK
 
 
