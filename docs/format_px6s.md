@@ -194,11 +194,22 @@ decoded layer's values are always multiples of 17.
 * **Greys.** The files were written with `AntiAliasing = 1`, and the decoded layers hold
   only 0 and 255 — no grey pixels on the line edges. The format can carry them (codes
   1…14, and `AntiAliasing` > 1 switches to bit planes); these files do not.
-* **Mirror.** There is no mirror flag in `px6s`: `display_mirror_x = 1` belongs to the
-  slicer's printer profile, not to this file. UVtools' Anycubic reader has no mirror step
-  either; the layer is stored as the slicer rendered it for the printer's LCD. What that
-  means for a mask we write ourselves is decided by the operator (`--mirror`) and checked
-  once by the F marker on the plate — it is not readable from the file.
+* **Mirror.** There is no mirror flag in `px6s` — neither in the file mark nor in any
+  table. `UVtoolsCmd print-properties` nevertheless prints `DisplayMirror: Horizontally`
+  for these files, and that number is a CONSTANT OF THE READER, not a record: in
+  `AnycubicFile.cs` the property is `public override FlipDirection DisplayMirror
+  { get => FlipDirection.Horizontally; set { } }` (class `AnycubicFile`, line 1503 at
+  `86c7c3c`) — hard-coded for every Anycubic file, with the setter doing nothing. It is
+  not read from `MACHINE.MachineName`, not looked up in the printer profile
+  (`PrinterModel` / `AnyCubicMachine`), and not stored anywhere. The layer is written as
+  the slicer rendered it for the printer's LCD; `display_mirror_x = 1` in a PrusaSlicer
+  profile is that slicer's own setting. So for a mask we write ourselves the mirror is the
+  operator's decision (`--mirror-x`), checked once by the F marker on the plate — it is not
+  readable from the file and not recoverable from UVtools.
+* **Brightness.** `LightPWM` does not exist in the Anycubic formats at all: a search for
+  `LightPWM` across `UVtools.Core/FileFormats/Anycubic*.cs` at `86c7c3c` finds nothing.
+  The UVtools/PrusaSlicer printer profile `LightPWM_255` is a profile value; a v517 file
+  carries no brightness field, and our report says exactly that instead of inventing one.
 * **Checksums.** None in v517: one `LayerDef` is 32 bytes with no CRC field, and the layer
   data is exactly the RLE bytes. UVtools carries CRC-16 helpers for `Rle4` (`CRCRle4`,
   `CRCEncodedRle`) but does not write them into these files (the append in `EncodePW0` is
@@ -243,3 +254,37 @@ Reading of the numbers:
 * machine table: name `Anycubic Photon Mono X 6Ks`, layer image format `pw0Img`; its own
   resolution and pixel fields are absent at length 156, so the header's numbers are the
   ones to use.
+
+## 10. Writing by replacing a template — what this project does
+
+`gerber2msla write` never builds a printer file from nothing: it takes the slicer's own
+file and replaces ONLY the fields named in §4 and §6–§7. Everything else — `EXTRA`,
+`MACHINE`, `SOFTWARE`, `MODEL`, the colour table, the lift heights and speeds, the order
+of the blocks — is copied byte for byte; addresses in the file mark and the layer record
+are recomputed because the layer data changes length.
+
+Measured on `01_test02.px6s` (`tests/test_px6s_write.py`, `diagnostics/` probes):
+
+* **the layer encoder matches Photon Workshop exactly.** Decoding the template's layer and
+  encoding it again with our `encode_pw0` gives the same 11 620 bytes — so writing the
+  template's own picture back with the same 25 s produces a file whose ONLY difference is
+  the preview: 20 differing byte runs, all inside the preview's 75 264 data bytes
+  (offsets 192…75 455), and zero differences outside it; the layer range 75 976…87 595 is
+  equal byte for byte;
+* **previews cannot match.** Their pixels are the slicer's own downscale of the model;
+  ours is a nearest-neighbour downscale of the mask (RGB565, the template's dimensions, so
+  the block length is unchanged). The cell states this instead of pretending;
+* **UVtools agrees on the result.** `UVtoolsCmd print-properties` of our plate file says
+  `ExposureTime: 25`, `BottomExposureTime: 25`, `BottomLayersCount: 1`, `LayerCount: 1`,
+  `NonZeroPixelCount: 736887` (ours), and `UVtoolsCmd extract -c Layers` gives a
+  `layer0.png` pixel-for-pixel equal to the mask we wrote — on the plate and on the
+  re-encoded template alike;
+* **`LightPWM` and `DisplayMirror` in that output are NOT the file's.** `LightPWM: 255`
+  is the default of UVtools' layer object (`CanUseLightPWM: False` — the format cannot
+  store it), and `DisplayMirror: Horizontally` is the constant of §8. Neither is written
+  by us, because neither exists in `px6s`;
+* **the second thumbnail slot is empty in this template.** UVtools prints
+  `ThumbnailCountFileShouldHave: 2` and `Preview2Settings: … TableLength: 28`, but the
+  file mark has `Preview2Address: 0` and the block is only its 28-byte header, which our
+  reader does not see at all. So there is one real `PREVIEW` to update; the report says
+  “preview2: absent in this template (address 0) — nothing to update”.

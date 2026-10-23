@@ -97,13 +97,32 @@ decode_pw0      RLE «код + длина серии» -> массив (height, 
 `86c7c3c`. Описание — единственный вход и для читателя, и для будущего писателя: код UVtools (C#, AGPL)
 не переносится и построчно не переводится.
 
-## Файл принтера: ЗАПИСЬ — `gerber2msla/px6s.py` (план П2, П3)
+## Файл принтера: ЗАПИСЬ — `gerber2msla/px6s_write.py` (П2)
 
 ```
-шаблон (вход)                      — настоящий однослойный px6s этого принтера, ТОЛЬКО чтение
-что утилита МЕНЯЕТ                 — данные слоя 0 (из PNG), ExposureTime и BottomExposureTime
-                                     (оба = --exposure-s), число слоёв = 1, BottomLayerCount = 1,
-                                     превью = уменьшенная маска
-что утилита НЕ трогает             — всё остальное (EXTRA, MACHINE, SOFTWARE, MODEL, служебные
-                                     блоки v517), байт в байт: блоки берутся по адресам
+Written          data: bytes, report: tuple[str, ...]
+encode_pw0       пиксели -> байты RLE; серии равных старших нибблов, склейка соседних
+                 серий одного цвета, 0/255 — до 4095 двумя байтами, прочие — до 15
+render_preview   маска -> RGB565 little-endian, nearest-neighbour в размеры шаблона
+mark_size        сколько байт занимает file mark версии
+write_from_template(template, mask, exposure_s, mirror_x=False) -> Written
+  меняет: данные слоя, ExposureTime, BottomExposureTime, BottomLayersCount = 1,
+          длину и адрес записи LAYERDEF, NonZeroPixelCount, превью (PREVIEW/PREVIEW2),
+          адреса в file mark
+  копирует байт в байт: HEADER (кроме обоих времён и числа нижних слоёв), EXTRA,
+          MACHINE, SOFTWARE, MODEL, цветовую таблицу, подъёмы/скорости, порядок блоков
+write_file       шаблон -> Written -> файл; возвращает путь и строки отчёта
 ```
+
+`LightPWM` в файл не пишется: в v517 такого поля нет, и отчёт говорит это словами.
+Флага зеркала в файле тоже нет: `--mirror-x` — решение оператора.
+
+## CLI — три модуля (П2)
+
+```
+cli.py        корень: prog, --version, сборка подкоманд, ловля Refusal/Px6sError, код 2
+cli_masks.py  группа `masks`: bars, grid, square, plate (перенесена без изменения флагов)
+cli_px6s.py   `write` (и `dump` в П3): маска PNG -> write_file -> отчёт
+```
+
+Маски НЕ переезжают в px6s-модуль: разделение — «маски здесь, write/dump там».

@@ -10,8 +10,11 @@ now `gerber2msla masks …`.
 file — a subcommand added to the tree without a handler is noticed here, not on the plate.
 """
 import argparse
+from pathlib import Path
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from conftest import run_mask
 
@@ -156,3 +159,18 @@ def test_plate_mm_reaches_the_layout(tmp_path, capsys):
              "--plate-mm", "20x16", "--margin-mm", "1", "--widths-mm", "0.2",
              "--lines", "1", "--grid-mm", "5x5", "--line-mm", "0.1", "--gap-mm", "0.1")
     assert "plate: 20.000 x 16.000 mm" in capsys.readouterr().out
+
+
+def test_write_refuses_a_mask_that_is_not_mode_l(tmp_path, capsys):
+    """A colour PNG is not a mask: one line, code 2, and no file left behind."""
+    template = Path(__file__).resolve().parents[1] / "tests" / "data" / "01_test02.px6s"
+    if not template.is_file():
+        pytest.skip("no tests/data/01_test02.px6s: the template is copied in with the writer")
+    mask = tmp_path / "rgb.png"
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8), mode="RGB").save(mask)
+    target = tmp_path / "out.px6s"
+    assert main(["write", str(mask), "--template", str(template), "-o", str(target),
+                 "--exposure-s", "25"]) == 2
+    err = capsys.readouterr().err
+    assert "mode L" in err and "RGB" in err
+    assert not target.exists()

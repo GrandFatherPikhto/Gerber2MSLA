@@ -79,9 +79,33 @@ measurement. The real pixel is measured with the `square` (see below), one axis 
 * the report — screen, pixel, widths requested and actual, mirror, polarity — is also
   written into the PNG text chunk `msla_tests`, so the file remembers what it is.
 
-Getting the PNG to the printer (Claude's route, not verified by Denis yet): open any
-one-layer file of that printer in **UVtools**, replace the layer with the imported PNG,
-set the exposure time and save. The mask fixes the geometry; the exposure time is the dose.
+## Write a printer file
+
+```sh
+.venv/bin/gerber2msla write out/plate.png --template real.px6s \
+    -o out/plate_25s.px6s --exposure-s 25 [--mirror-x]
+```
+
+* the **template** is a real one-layer `px6s` of this printer (version 517), made by the
+  slicer: everything that belongs to the machine — lift heights, speeds, the `MACHINE`,
+  `EXTRA`, `SOFTWARE` and `MODEL` blocks — is copied byte for byte. Only the layer, the
+  two exposure times, the layer count and the previews are written;
+* the mask must be exactly the template's resolution, mode `L`, values 0/255; anything
+  else is refused with the numbers found;
+* **the bottom-layer trap:** in a one-layer file layer 0 IS the bottom layer, and the
+  printer exposes it with the bottom time. Both `ExposureTime` and `BottomExposureTime`
+  are set to `--exposure-s`, the bottom layer count to 1 — the report says what was
+  written;
+* `--mirror-x` reflects the mask before encoding and is OFF by default: the file carries
+  no mirror flag, so the decision is yours and is checked once by the F marker on the
+  plate. The report says whether it was on;
+* `LightPWM` is not stored in `px6s` v517 at all; the report says so instead of inventing
+  a brightness;
+* the report also prints the white pixel count and its area in mm², and the path written.
+
+Getting the file to the printer: open it in **UVtools** first — the layer must equal your
+mask and the times must be yours — and only then copy it to the printer. Nothing in this
+tool talks to the printer.
 
 ## Install (development)
 

@@ -21,6 +21,7 @@ Cells:
 from __future__ import annotations
 
 import struct
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -180,9 +181,29 @@ def test_run_length_data_that_runs_off_the_end_is_refused():
     assert "runs off the end" in str(exc.value)
 
 
-@pytest.mark.parametrize("name", ["01_test01.px6s", "01_test02.px6s"])
-@pytest.mark.skip(reason="no tests/data: the real printer files live outside the repository "
-                         "(plan П1а); the probe reads them from techdocs/px6s_examples/")
-def test_the_real_printer_files_decode(name):
-    """Numbers for these cells: `docs/format_px6s.md` §9, printed by the probe."""
-    assert name  # a placeholder until tests/data exists, so the intent stays visible
+DATA = Path(__file__).resolve().parents[1] / "tests" / "data"
+
+
+def test_the_real_printer_template_decodes():
+    """The template allowed into the repository: 01_test02.px6s, numbers in §9 of the doc."""
+    path = DATA / "01_test02.px6s"
+    if not path.is_file():
+        pytest.skip(f"no {path}: tests/data holds the real template only when it is copied in")
+    printer = read_file(path)
+    assert printer.mark.version == 517
+    assert printer.layer_count == 1
+    assert printer.header.resolution_x == 5760
+    assert printer.header.resolution_y == 3600
+    assert printer.header.pixel_size_um == pytest.approx(34.0)
+    assert printer.header.exposure_s == pytest.approx(25.0)
+    assert printer.header.bottom_exposure_s == pytest.approx(25.0)
+    assert printer.header.bottom_layers == 1.0
+    image = printer.layer_image(0)
+    assert image.shape == (3600, 5760)
+    assert set(np.unique(image).tolist()) == {0, 255}
+    assert int((image > 0).sum()) == printer.layers[0].non_zero_pixels == 3_805_630
+
+
+@pytest.mark.skip(reason="01_test01.px6s is 2.4 MB: it stays a probe in techdocs/px6s_examples/")
+def test_the_big_real_file_stays_a_probe():
+    """Same cell, different file: printed by diagnostics/probe_px6s_examples_2026_10_23.py."""
