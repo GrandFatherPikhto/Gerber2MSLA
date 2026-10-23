@@ -24,6 +24,14 @@ Gerber2MSLA, 23.10.2026, по образцу Gerber2LDI `docs/map/contracts.md`.
 | **PNG маски — ровно экран, `L`, 0/255** | режим `L`, ровно `W×H` пикселей экрана, значения только 0 и 255; иное — отказ | `gerber2msla/masks.py` (`write_mask`) | `test_masks.py`: `test_the_mask_is_the_screen_in_two_values` | план П0 |
 | **Экран и пиксель — обязательные аргументы** | `--screen-px` и `--pixel-um` без умолчаний: выдуманное число хуже отказа; пиксель может быть неквадратным | `gerber2msla/cli_masks.py` | `test_cli_masks.py`: `test_the_screen_and_the_pixel_are_mandatory` | план П4 |
 
+## Плата: геометрия → пиксели (план Г1)
+
+| договор | суть | где в коде | сторож | канон |
+|---|---|---|---|---|
+| **Пиксель засвечивается, если его ЦЕНТР внутри фигуры** | у масок это `round(размер / шаг)`; у геометрии платы — шаг строки `pixel_y_mm` (`ROW_CENTRE = 0.5`) и `ceil(x / шаг − 0.5)` по X; отверстие — ЗАМКНУТЫЙ интервал (`floor` справа), потому что это круг заданного диаметра. Это НЕ «выборка по краю пикселя»: на фигуре, сдвинутой на полпикселя, край и центр дают РАЗНЫЕ столбцы | `gerber2msla/board.py` (`_pixel_span`, `_pixel_span_closed`, `_pour_holes`), `gerber2msla/gerber_rows.py:156` (`row_y`) | `tests/test_board.py`: `test_a_one_millimetre_region_is_ten_pixels_square`, `test_a_sliver_off_the_grid_lights_the_pixel_its_centre_falls_into`, `test_a_round_flash_lights_the_pixels_whose_centres_are_inside`; мутация «выборка по краю» убита | план Г1 |
+| **Переворот Y — ОДИН, в `board.build_board`** | `iter_rows` идёт от низа платы вверх, строки PNG — сверху вниз: `image_row = height_px − 1 − index`, один раз и только там; без `--mirror` картинка = вид на плату СВЕРХУ, как в KiCad, и для `F_Cu`, и для `B_Cu` | `gerber2msla/board.py` (`build_board`) | `tests/test_board.py`: `test_the_letter_g_is_read_as_seen_from_above_after_the_one_y_flip`, `test_the_outline_sets_the_frame_so_the_pad_keeps_its_offset`; мутация «Y не перевёрнут» убита обеими | план Г1 |
+| **Рамка одна для меди и сверловки; дырки — ПОСЛЕ меди** | `--outline` — габарит контура (единственный способ совместить верх и низ одной платы), без него — габарит меди и строка `warning:`; каждое отверстие — круг ДИАМЕТРОМ из файла, чёрным ПОСЛЕ меди; уже 2 px в диаметре — `warning:` | `gerber2msla/board.py` (`_frame`, `_pour_holes`, `SMALL_HOLE_PX`) | `tests/test_board.py`: `test_the_outline_sets_the_frame_so_the_pad_keeps_its_offset`, `test_the_report_warns_when_the_frame_comes_from_the_copper`, `test_a_hole_is_black_inside_the_pad_and_the_pad_is_solid_without_it`, `test_the_report_announces_a_hole_narrower_than_two_pixels`; мутации «рамка по меди» и «радиус = диаметр» убиты | план Г1 |
+
 ## Формат `px6s` (план П1–П3)
 
 | договор | суть | где в коде | сторож | канон |

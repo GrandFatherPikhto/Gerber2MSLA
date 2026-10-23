@@ -169,8 +169,19 @@ def load_layer(path: str | Path) -> Layer:
     try:
         with quiet_library():
             gerber = GerberFile.open(str(source))
+            objects = list(gerber.objects)
+            if not objects:
+                # MEASURED, and the reason this check exists at all: `gerbonara` 1.6.3
+                # opens ANY text file without complaint and yields no objects, and its
+                # `bounding_box()` then returns None. Without this line a file that is
+                # not a Gerber at all would look like a legal empty layer, and asking
+                # for the box would say "cannot unpack non-iterable NoneType object".
+                # An empty DRILL file stays legal on purpose: NPTH.drl with no holes is
+                # a normal KiCad output, and zero holes is the truth about it.
+                raise Refusal(f"Cannot read Gerber file {source}: it holds no Gerber "
+                              f"objects, so it is not a layer to draw")
             shapes = tuple(_shape_of(prim, index=index)
-                           for index, obj in enumerate(gerber.objects)
+                           for index, obj in enumerate(objects)
                            for prim in obj.to_primitives(unit=MM))
             (x0, y0), (x1, y1) = gerber.bounding_box(MM)
             unit = str(gerber.unit)
