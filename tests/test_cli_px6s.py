@@ -24,8 +24,10 @@ SCREEN_ARGS = ("--screen-px", "5760x3600", "--pixel-um", "34x34")
 
 
 def _template() -> Path:
+    """The template is IN GIT: its absence is a break, not a reason to skip a guard."""
     if not TEMPLATE.is_file():
-        pytest.skip("no tests/data/01_test02.px6s: the template is copied in with the writer")
+        pytest.fail(f"no {TEMPLATE}: the real template is committed, so a missing file "
+                    f"breaks every cell that reads it")
     return TEMPLATE
 
 

@@ -188,7 +188,8 @@ def test_the_real_printer_template_decodes():
     """The template allowed into the repository: 01_test02.px6s, numbers in §9 of the doc."""
     path = DATA / "01_test02.px6s"
     if not path.is_file():
-        pytest.skip(f"no {path}: tests/data holds the real template only when it is copied in")
+        pytest.fail(f"no {path}: the real template is committed, so a missing file breaks "
+                    f"the reader's only test on real bytes")
     printer = read_file(path)
     assert printer.mark.version == 517
     assert printer.layer_count == 1
