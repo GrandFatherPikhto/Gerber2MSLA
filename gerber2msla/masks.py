@@ -195,6 +195,17 @@ def _label(placement: Placement) -> str:
     return "figure" if placement.name is None else f"figure {placement.name}"
 
 
+def _flipped_left(screen: Screen, placement: Placement) -> int:
+    """The LEFT edge of a figure after the mirror, in pixels.
+
+    The mirror reverses the order of parts: the left edge ``x`` lands on ``W - x - w``,
+    because the figure's own width moves its right edge to ``W - x``. ``W - 1 - x`` would
+    name its right PIXEL, one whole figure width away — the defect the П5б acceptance
+    caught, and the number the reader needs for the plate.
+    """
+    return screen.width_px - placement.x_px - placement.figure.width_px
+
+
 def _where(placement: Placement, screen: Screen) -> str:
     """Where the figure was put, in the operator's terms.
 
@@ -257,8 +268,18 @@ def compose(screen: Screen, placements: Sequence[Placement], *,
 
     if mirror:
         image = np.fliplr(image)
-        lines.append("mirror: on (the whole picture is reflected along X; a figure at x px "
-                     "of the plate is at width - 1 - x on it)")
+        if len(placements) == 1 and placements[0].name is None:
+            # A single pattern keeps the sentence of Gerber2LDI 364fd28, byte for byte.
+            flipped = _flipped_left(screen, placements[0])
+            lines.append(
+                f"mirror: on (the whole picture is reflected along X: on the plate the "
+                f"figure sits at {flipped} px across = {screen.mm_x(flipped):.3f} mm)")
+        else:
+            lines.append("mirror: on (the whole picture is reflected along X)")
+            for placement in placements:
+                flipped = _flipped_left(screen, placement)
+                lines.append(f"mirror: figure {placement.name} sits at {flipped} px across = "
+                             f"{screen.mm_x(flipped):.3f} mm")
     else:
         lines.append("mirror: off")
     if invert:

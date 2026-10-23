@@ -360,3 +360,24 @@ def test_the_mirror_reflects_the_whole_plate_once(tmp_path, capsys):
     assert not np.array_equal(mirrored, direct)
     assert report.count("figure marker:") == 1, "the F is not drawn per figure"
     assert "mirror: on" in report
+
+
+def test_the_plate_mirror_report_says_where_each_figure_lands(tmp_path, capsys):
+    """Each figure's number is its LEFT edge after the flip, and the PNG agrees."""
+    direct = pixels(run_mask(tmp_path, "plate", *PLATE_ARGS, name="direct.png"))
+    report = capsys.readouterr().out
+    mirrored = pixels(run_mask(tmp_path, "plate", *PLATE_ARGS, "--mirror",
+                               name="mirrored.png"))
+    out = capsys.readouterr().out
+    assert np.array_equal(mirrored, np.fliplr(direct))
+    screen_width_px = int(PLATE_SCREEN[1].split("x")[0])
+    pixel_mm = 0.0344
+    for name in ("frame", "marker", "bars", "grid"):
+        x_px, y_px, width_px, height_px = _placement(report, name)
+        flipped = screen_width_px - x_px - width_px
+        assert (f"mirror: figure {name} sits at {flipped} px across = "
+                f"{flipped * pixel_mm:.3f} mm") in out
+        assert np.array_equal(
+            mirrored[y_px:y_px + height_px, flipped:flipped + width_px],
+            np.fliplr(direct[y_px:y_px + height_px, x_px:x_px + width_px])), \
+            f"the {name} number is where the figure really landed"

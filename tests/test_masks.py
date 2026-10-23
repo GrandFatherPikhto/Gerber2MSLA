@@ -192,6 +192,21 @@ def test_two_figures_that_overlap_are_refused():
     assert "mm" in message and "px" in message
 
 
+def test_the_mirror_report_says_where_the_figure_lands(tmp_path, screen_args,
+                                                       square_pixel_args, capsys):
+    """The mirror sentence carries NUMBERS: the figure's LEFT edge after the reflection.
+
+    Gerber2LDI 364fd28 printed exactly this line. The П5б acceptance caught it turning into
+    a formula (`width - 1 - x`), which names the right PIXEL, not the left edge — a whole
+    figure width away from where the operator looks for the pattern.
+    """
+    run_mask(tmp_path, "bars", *screen_args, *square_pixel_args, "--widths-mm", "0.2",
+             "--lines", "2", "--mirror")
+    out = capsys.readouterr().out
+    assert ("mirror: on (the whole picture is reflected along X: on the plate the figure "
+            "sits at 30 px across = 1.032 mm)") in out
+
+
 def test_a_named_figure_off_the_screen_is_refused_with_its_name():
     screen = masks.Screen(20, 20, 34.4, 34.4)
     with pytest.raises(masks.Refusal) as exc:
