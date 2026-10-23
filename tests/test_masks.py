@@ -21,6 +21,7 @@ Cells:
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from conftest import pixels, run_mask
@@ -157,3 +158,45 @@ def test_the_report_says_where_the_marker_is_and_how_to_read_it(
     assert "marker: the letter F in the top-left corner of the figure" in out
     assert "the pattern starts" in out
     assert "stem is on the LEFT" in out
+
+
+# ─────────────────── placement of many figures (plan П5б) ──────────────────
+
+def _white(width: int, height: int) -> masks.Figure:
+    return masks.Figure(pixels=np.full((height, width), masks.WHITE, dtype=np.uint8),
+                        report=())
+
+
+def test_figures_are_pasted_at_their_pixels():
+    """A placement is a pixel corner: the figure lands there, nothing is re-centred."""
+    screen = masks.Screen(40, 30, 34.4, 34.4)
+    image, lines = masks.compose(
+        screen, (masks.Placement(_white(3, 2), 7, 9, name="a"),),
+        mirror=False, invert=False)
+    assert image[9:11, 7:10].all(), "the figure sits at its (x, y)"
+    assert int((image > 0).sum()) == 6, "nothing else is painted"
+    assert lines[0].startswith("figure a: 0.103 x 0.069 mm (3 x 2 px), at ")
+    assert "(7, 9 px)" in lines[0]
+
+
+def test_two_figures_that_overlap_are_refused():
+    """A plate never shrinks a figure to make it fit: the clash is an answer."""
+    screen = masks.Screen(100, 100, 34.4, 34.4)
+    placements = (masks.Placement(_white(10, 10), 5, 5, name="a"),
+                  masks.Placement(_white(10, 10), 10, 10, name="b"))
+    with pytest.raises(masks.Refusal) as exc:
+        masks.compose(screen, placements, mirror=False, invert=False)
+    message = str(exc.value)
+    assert "figure a" in message and "figure b" in message
+    assert "overlap" in message
+    assert "mm" in message and "px" in message
+
+
+def test_a_named_figure_off_the_screen_is_refused_with_its_name():
+    screen = masks.Screen(20, 20, 34.4, 34.4)
+    with pytest.raises(masks.Refusal) as exc:
+        masks.compose(screen, (masks.Placement(_white(5, 5), 18, 0, name="grid"),),
+                      mirror=False, invert=False)
+    message = str(exc.value)
+    assert "figure grid" in message
+    assert "does not fit" in message

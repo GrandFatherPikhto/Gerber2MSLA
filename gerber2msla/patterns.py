@@ -42,7 +42,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .masks import UM_PER_MM, WHITE, Figure, Refusal, Screen, _actual, _quantised
+from .masks import (MARKER_GAP_MM, UM_PER_MM, WHITE, Figure, Placement, Refusal, Screen,
+                    _actual, _quantised, marker_pixels, origin_pixels)
 
 DEFAULT_WIDTHS_MM = (0.200, 0.150, 0.100, 0.080, 0.060, 0.050)
 DEFAULT_LINES = 5
@@ -53,6 +54,13 @@ DEFAULT_GRID_GAP_MM = 0.15
 DEFAULT_SQUARE_SIDE_MM = 100.0
 """The laser's 150 mm square does not fit: this screen is 122.4 mm high."""
 DEFAULT_SQUARE_LINE_MM = 0.2
+PLATE_WIDTH_MM = 70.0
+PLATE_HEIGHT_MM = 78.0
+"""Denis' blank: 70 mm across the screen (X) by 78 mm down it (Y)."""
+PLATE_MARGIN_MM = 2.0
+PLATE_GRID_WIDTH_MM = 30.0
+PLATE_GRID_HEIGHT_MM = 30.0
+"""The single-command grid (50 x 40 mm) does not fit HALF of a 70 x 78 plate."""
 BLOCK_GAP_MM = 2.0
 """Physical gap between the horizontal and the vertical block of `bars`, in mm."""
 DIRECTIONS = ("both", "x", "y")
@@ -275,8 +283,9 @@ def build_square(screen: Screen, side_x_mm: float, side_y_mm: float, line: Width
         f"pattern: square, side {side_x_mm:.3f} x {side_y_mm:.3f} mm, line {line.label}",
         f"drawn: {n_x} x {n_y} px = {screen.mm_x(n_x):.3f} x {screen.mm_y(n_y):.3f} mm, "
         f"strokes {w_x} x {w_y} px",
-        "measure both sides with calipers: the square measures the REAL pixel of each axis "
-        "(the printer profile is not a spec sheet)",
+        "measure both sides with calipers, OUTER edge to outer edge: the drawn side is n px "
+        "of the OUTER contour, so the outer edges are what the formula divides (the printer "
+        "profile is not a spec sheet)",
         f"pixel_um_x = measured_x_mm / {n_x} * 1000",
         f"pixel_um_y = measured_y_mm / {n_y} * 1000",
         "diagonals: d1 = d2 expected; a difference is a measurement error or the plate "
@@ -290,3 +299,115 @@ def build_square(screen: Screen, side_x_mm: float, side_y_mm: float, line: Width
     ) if text]
     return Figure(pixels=figure,
                   report=tuple(report) + tuple(f"warning: {text}" for text in warnings))
+
+
+# ───────────────────────────── plate (plan П5б) ────────────────────────────
+
+def _require_inside(name: str, figure: Figure, x_px: int, y_px: int, *,
+                    left: int, top: int, right: int, bottom: int,
+                    screen: Screen) -> None:
+    """A figure must sit inside the frame opening; the plate never shrinks it."""
+    if (x_px >= left and y_px >= top
+            and x_px + figure.width_px <= right
+            and y_px + figure.height_px <= bottom):
+        return
+    raise Refusal(
+        f"the figure {name} {screen.mm_x(figure.width_px):.3f} x "
+        f"{screen.mm_y(figure.height_px):.3f} mm ({figure.width_px} x "
+        f"{figure.height_px} px) does not fit the plate frame: it would span "
+        f"{x_px} ... {x_px + figure.width_px} px across and {y_px} ... "
+        f"{y_px + figure.height_px} px down; the room inside the frame is "
+        f"{left} ... {right} px across and {top} ... {bottom} px down "
+        f"({screen.mm_x(right - left):.3f} x {screen.mm_y(bottom - top):.3f} mm)")
+
+
+def build_plate(screen: Screen, *, plate_w_mm: float, plate_h_mm: float, margin_mm: float,
+                square_line: Width, widths: tuple[Width, ...], lines: int,
+                grid_line: Width, grid_gap: Width, grid_width_mm: float,
+                grid_height_mm: float, direction: str,
+                at_mm: tuple[float, float] | None) -> tuple[tuple[Placement, ...],
+                                                           tuple[str, ...]]:
+    """One plate: frame, ONE marker, bars on the left half, grid on the right half.
+
+    The layout is FIXED — a mask carries no captions, so the layout IS the label. Figures
+    are built by the same rules as the single commands; an overlap or anything outside the
+    frame is a refusal with names, millimetres and pixels, never a silent shrink.
+    """
+    plate_w_px = _quantised(plate_w_mm, screen.pixel_x_mm, "X", "the plate width")
+    plate_h_px = _quantised(plate_h_mm, screen.pixel_y_mm, "Y", "the plate height")
+    plate_x, plate_y = origin_pixels(screen, plate_w_px, plate_h_px, at_mm)
+    margin_x = _quantised(margin_mm, screen.pixel_x_mm, "X", "the margin")
+    margin_y = _quantised(margin_mm, screen.pixel_y_mm, "Y", "the margin")
+    if plate_w_px <= 2 * margin_x or plate_h_px <= 2 * margin_y:
+        raise Refusal(
+            f"the plate {plate_w_mm:.3f} x {plate_h_mm:.3f} mm with a {margin_mm:.3f} mm "
+            f"margin leaves no room for a frame: {plate_w_px} x {plate_h_px} px plate, "
+            f"{margin_x} x {margin_y} px margin on each side")
+
+    frame = build_square(screen, plate_w_mm - 2 * margin_mm, plate_h_mm - 2 * margin_mm,
+                         square_line)
+    frame_x = plate_x + margin_x
+    frame_y = plate_y + margin_y
+    w_x = _width_pixels(square_line, screen.pixel_x_mm, "X", "the frame line")
+    w_y = _width_pixels(square_line, screen.pixel_y_mm, "Y", "the frame line")
+    inner_left = frame_x + w_x
+    inner_top = frame_y + w_y
+    inner_right = frame_x + frame.width_px - w_x
+    inner_bottom = frame_y + frame.height_px - w_y
+    gap_x = _quantised(MARKER_GAP_MM, screen.pixel_x_mm, "X", "the figure gap")
+    gap_y = _quantised(MARKER_GAP_MM, screen.pixel_y_mm, "Y", "the figure gap")
+    room_left = inner_left + gap_x
+    room_top = inner_top + gap_y
+    room_right = inner_right - gap_x
+    room_bottom = inner_bottom - gap_y
+    half_w = (room_right - room_left - gap_x) // 2
+    if half_w < 1:
+        raise Refusal(
+            f"the plate leaves no room for two halves: {room_right - room_left} px between "
+            f"the frame and the {gap_x} px gaps is too narrow for bars and grid")
+
+    marker = Figure(pixels=marker_pixels(screen), report=())
+    bars = build_bars(screen, widths, lines)
+    grid = build_grid(screen, grid_width_mm, grid_height_mm, grid_line, grid_gap, direction)
+
+    bars_x = room_left
+    bars_y = room_top + marker.height_px + gap_y
+    grid_x = room_left + half_w + gap_x
+    grid_y = room_top
+    _require_inside("bars", bars, bars_x, bars_y, left=room_left, top=room_top,
+                    right=room_right, bottom=room_bottom, screen=screen)
+    _require_inside("grid", grid, grid_x, grid_y, left=room_left, top=room_top,
+                    right=room_right, bottom=room_bottom, screen=screen)
+
+    report = [
+        f"plate: {plate_w_mm:.3f} x {plate_h_mm:.3f} mm ({plate_w_px} x {plate_h_px} px), "
+        f"margin {margin_mm:.3f} mm = {margin_x} x {margin_y} px",
+        f"frame: {frame.width_px} x {frame.height_px} px = "
+        f"{screen.mm_x(frame.width_px):.3f} x {screen.mm_y(frame.height_px):.3f} mm, "
+        f"line {square_line.label}",
+        f"inside the frame: {inner_right - inner_left} x {inner_bottom - inner_top} px = "
+        f"{screen.mm_x(inner_right - inner_left):.3f} x "
+        f"{screen.mm_y(inner_bottom - inner_top):.3f} mm; figures keep "
+        f"{gap_x} x {gap_y} px = {screen.mm_x(gap_x):.3f} x {screen.mm_y(gap_y):.3f} mm "
+        f"from the frame and from each other",
+        "layout: marker top-left, bars in the left half, grid in the right half — the "
+        "layout IS the label (a mask has no captions)",
+        f"halves: the left half is {half_w} px = {screen.mm_x(half_w):.3f} mm wide",
+        f"grid on a plate: {grid_width_mm:.3f} x {grid_height_mm:.3f} mm "
+        f"(the plate default is {PLATE_GRID_WIDTH_MM:g} x {PLATE_GRID_HEIGHT_MM:g} mm, not "
+        f"the single-command {DEFAULT_GRID_WIDTH_MM:g} x {DEFAULT_GRID_HEIGHT_MM:g} mm: "
+        f"that one does not fit the {half_w} px half)",
+        f"marker: ONE letter F inside the frame, top-left, {marker.width_px} x "
+        f"{marker.height_px} px = {screen.mm_x(marker.width_px):.3f} x "
+        f"{screen.mm_y(marker.height_px):.3f} mm",
+        *frame.report,
+        *bars.report,
+        *grid.report,
+    ]
+    placements = (
+        Placement(frame, frame_x, frame_y, name="frame"),
+        Placement(marker, room_left, room_top, name="marker"),
+        Placement(bars, bars_x, bars_y, name="bars"),
+        Placement(grid, grid_x, grid_y, name="grid"),
+    )
+    return placements, tuple(report)

@@ -23,6 +23,9 @@ gerber2msla masks grid   --screen-px WxH --pixel-um PXxPY -o out/grid.png \
                          [--gap-mm 0.15 | --gap-px 4] [--direction both|x|y] …
 gerber2msla masks square --screen-px WxH --pixel-um PXxPY -o out/square.png \
                          [--side-mm 100 | --side-px N] [--line-mm 0.2 | --line-px 6] …
+gerber2msla masks plate  --screen-px WxH --pixel-um PXxPY -o out/plate.png \
+                         [--plate-mm 70x78] [--margin-mm 2] [--grid-mm 30x30] \
+                         [--widths-mm … | --widths-px …] [--lines 5] …
 ```
 
 `--screen-px` and `--pixel-um` are **mandatory and have no defaults**: an invented number is
@@ -38,6 +41,8 @@ measurement. The real pixel is measured with the `square` (see below), one axis 
     -o out/grid.png --width-mm 50 --height-mm 40 --line-px 6 --gap-px 4
 .venv/bin/gerber2msla masks square --screen-px 5760x3600 --pixel-um 34x34 \
     -o out/square.png --side-mm 100 --line-mm 0.2
+.venv/bin/gerber2msla masks plate --screen-px 5760x3600 --pixel-um 34x34 \
+    -o out/plate.png --plate-mm 70x78
 ```
 
 * The pixel may be not square — two sizes, one per axis.
@@ -48,8 +53,14 @@ measurement. The real pixel is measured with the `square` (see below), one axis 
 * `square` — a closed contour; the side (100 mm by default — the laser's 150 mm does not fit
   this screen) and the line are whole pixels of their OWN axis. The report prints
   `pixel_um_x = measured_x_mm / n_x * 1000` (and Y) with this order's numbers: measure both
-  sides with calipers and type the result into `--pixel-um`. The diagonals only check the
-  measurement (`d1 = d2` expected) — the LCD grid has no skew, only a scale;
+  sides with calipers, OUTER edge to outer edge, and type the result into `--pixel-um`. The
+  diagonals only check the measurement (`d1 = d2` expected) — the LCD grid has no skew,
+  only a scale;
+* `plate` — every test on ONE exposure: the square frame (plate minus the margin), one
+  letter F, `bars` on the left half and `grid` on the right half. The layout is fixed
+  because a mask has no captions. On a plate the grid default is 30 x 30 mm — the
+  single-command 50 x 40 does not fit half a plate, and the report says so with numbers.
+  Figures that overlap or leave the frame are refused, never silently shrunk;
 * every width becomes `n = round(width / pitch)` pixels of its OWN axis, and the report
   prints the requested width beside the ACTUAL one: a 0.100 mm line on a 34 um pixel is
   3 px = 0.102 mm. That actual number is the one to expect on the plate.

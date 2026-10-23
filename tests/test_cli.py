@@ -148,3 +148,11 @@ def test_side_px_reaches_the_square_builder(tmp_path, screen_args, rect_pixel_ar
     out = capsys.readouterr().out
     assert "drawn: 40 x 40 px" in out
     assert "1.376 x 1.200 mm" in out, "one count, two physical sides"
+
+
+def test_plate_mm_reaches_the_layout(tmp_path, capsys):
+    """The plate size is parsed AND used: 20 x 16 mm on the plate line, not the default."""
+    run_mask(tmp_path, "plate", "--screen-px", "1200x900", "--pixel-um", "34.4x34.4",
+             "--plate-mm", "20x16", "--margin-mm", "1", "--widths-mm", "0.2",
+             "--lines", "1", "--grid-mm", "5x5", "--line-mm", "0.1", "--gap-mm", "0.1")
+    assert "plate: 20.000 x 16.000 mm" in capsys.readouterr().out

@@ -22,11 +22,13 @@ import math
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
-from .masks import Refusal, Screen, add_marker, compose, write_mask
+from .masks import Refusal, Screen, add_marker, compose, place_figure, write_mask
 from .patterns import (DEFAULT_GRID_GAP_MM, DEFAULT_GRID_HEIGHT_MM, DEFAULT_GRID_LINE_MM,
                        DEFAULT_GRID_WIDTH_MM, DEFAULT_LINES, DEFAULT_SQUARE_LINE_MM,
-                       DEFAULT_SQUARE_SIDE_MM, DEFAULT_WIDTHS_MM, DIRECTIONS, Width,
-                       build_bars, build_grid, build_square)
+                       DEFAULT_SQUARE_SIDE_MM, DEFAULT_WIDTHS_MM, DIRECTIONS,
+                       PLATE_GRID_HEIGHT_MM, PLATE_GRID_WIDTH_MM, PLATE_HEIGHT_MM,
+                       PLATE_MARGIN_MM, PLATE_WIDTH_MM, Width, build_bars, build_grid,
+                       build_plate, build_square)
 
 PROG = "gerber2msla"
 EXIT_OK = 0
@@ -70,6 +72,23 @@ def _micrometres_pair(text: str) -> tuple[float, float]:
         raise argparse.ArgumentTypeError(
             f"expected two positive pixel sizes in um, got {text!r}")
     return x_um, y_um
+
+
+def _mm_pair(text: str) -> tuple[float, float]:
+    """argparse type: ``WxH`` in millimetres, both sizes positive and finite."""
+    parts = text.replace(" ", "").lower().split("x")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError(
+            f"expected two sizes separated by x, got {text!r}")
+    try:
+        width, height = (float(part) for part in parts)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected two sizes separated by x, got {text!r}") from None
+    if not (math.isfinite(width) and math.isfinite(height)) or width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError(
+            f"expected two positive sizes in mm, got {text!r}")
+    return width, height
 
 
 def _millimetres_pair(text: str) -> tuple[float, float]:
@@ -168,7 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
     kinds = masks.add_subparsers(dest="kind", metavar="PATTERN")
     kinds.required = True
 
-    def common(kind: argparse.ArgumentParser) -> None:
+    def common(kind: argparse.ArgumentParser, *, marker: bool = True) -> None:
         kind.add_argument("--screen-px", type=_pixels_pair, required=True,
                           help="screen size in pixels, WxH (no default: read the spec)")
         kind.add_argument("--pixel-um", type=_micrometres_pair, required=True,
@@ -181,10 +200,11 @@ def build_parser() -> argparse.ArgumentParser:
                           help="reflect the whole picture along X (a resist facing the screen)")
         kind.add_argument("--invert", action="store_true",
                           help="white = the gaps instead of the lines")
-        kind.add_argument("--marker", action=argparse.BooleanOptionalAction, default=True,
-                          help="draw the letter F in the top-left corner of the figure, so a "
-                               "mirrored or upside-down exposure is visible on the plate "
-                               "(--no-marker turns it off)")
+        if marker:
+            kind.add_argument("--marker", action=argparse.BooleanOptionalAction, default=True,
+                              help="draw the letter F in the top-left corner of the figure, so a "
+                                   "mirrored or upside-down exposure is visible on the plate "
+                                   "(--no-marker turns it off)")
 
     bars_parser = kinds.add_parser(
         "bars", help="lines and gaps of known widths, horizontal and vertical blocks",
@@ -240,6 +260,50 @@ def build_parser() -> argparse.ArgumentParser:
                                help="line width in WHOLE pixels of the screen, both axes "
                                     "(excludes --line-mm)")
     square_parser.set_defaults(handler=_cmd_square)
+
+    plate_parser = kinds.add_parser(
+        "plate", help="every test on one plate: frame, one marker, bars and grid",
+        description="every test on ONE plate: the square frame, one marker, bars on the "
+                    "left half and grid on the right half — the layout is the label")
+    common(plate_parser, marker=False)     # a plate always carries exactly one F
+    plate_parser.add_argument("--plate-mm", type=_mm_pair,
+                              default=(PLATE_WIDTH_MM, PLATE_HEIGHT_MM),
+                              help="plate size WxH in mm "
+                                   f"(default {PLATE_WIDTH_MM:g}x{PLATE_HEIGHT_MM:g})")
+    plate_parser.add_argument("--margin-mm", type=_positive_mm, default=PLATE_MARGIN_MM,
+                              help="margin from the plate edge to the frame "
+                                   f"(default {PLATE_MARGIN_MM:g})")
+    plate_parser.add_argument("--grid-mm", type=_mm_pair,
+                              default=(PLATE_GRID_WIDTH_MM, PLATE_GRID_HEIGHT_MM),
+                              help="grid rectangle WxH in mm "
+                                   f"(default {PLATE_GRID_WIDTH_MM:g}x"
+                                   f"{PLATE_GRID_HEIGHT_MM:g}: the single-command default "
+                                   "does not fit half a plate)")
+    plate_parser.add_argument("--square-line-mm", type=_positive_mm, default=None,
+                              help=f"frame line in mm (default {DEFAULT_SQUARE_LINE_MM:g})")
+    plate_parser.add_argument("--square-line-px", type=_whole_pixels, default=None,
+                              help="frame line in WHOLE pixels (excludes --square-line-mm)")
+    plate_parser.add_argument("--widths-mm", type=_width_list, default=None,
+                              help="bar widths in mm, in the order to draw them "
+                                   f"(default {' '.join(f'{w:g}' for w in DEFAULT_WIDTHS_MM)})")
+    plate_parser.add_argument("--widths-px", type=_pixel_list, default=None,
+                              help="bar widths in WHOLE pixels, one count for both axes "
+                                   "(excludes --widths-mm)")
+    plate_parser.add_argument("--lines", type=_line_count, default=DEFAULT_LINES,
+                              help="lines per bars group")
+    plate_parser.add_argument("--line-mm", type=_positive_mm, default=None,
+                              help=f"grid line width in mm (default {DEFAULT_GRID_LINE_MM:g})")
+    plate_parser.add_argument("--line-px", type=_whole_pixels, default=None,
+                              help="grid line width in WHOLE pixels (excludes --line-mm)")
+    plate_parser.add_argument("--gap-mm", type=_positive_mm, default=None,
+                              help=f"gap between grid lines in mm (default "
+                                   f"{DEFAULT_GRID_GAP_MM:g})")
+    plate_parser.add_argument("--gap-px", type=_whole_pixels, default=None,
+                              help="gap between grid lines in WHOLE pixels "
+                                   "(excludes --gap-mm)")
+    plate_parser.add_argument("--direction", choices=DIRECTIONS, default="both",
+                              help="grid lines along X, along Y, or both")
+    plate_parser.set_defaults(handler=_cmd_plate)
     return parser
 
 
@@ -286,6 +350,25 @@ def _cmd_grid(args: argparse.Namespace) -> int:
     return _emit(args, screen, figure)
 
 
+def _cmd_plate(args: argparse.Namespace) -> int:
+    """Every figure of a plate, placed by `masks.compose` — one marker, one mirror."""
+    screen = _screen(args)
+    plate_w_mm, plate_h_mm = args.plate_mm
+    grid_w_mm, grid_h_mm = args.grid_mm
+    square_line = _one_width(args.square_line_mm, args.square_line_px,
+                             DEFAULT_SQUARE_LINE_MM, "--square-line-mm", "--square-line-px")
+    line = _one_width(args.line_mm, args.line_px, DEFAULT_GRID_LINE_MM,
+                      "--line-mm", "--line-px")
+    gap = _one_width(args.gap_mm, args.gap_px, DEFAULT_GRID_GAP_MM,
+                     "--gap-mm", "--gap-px")
+    placements, report = build_plate(
+        screen, plate_w_mm=plate_w_mm, plate_h_mm=plate_h_mm, margin_mm=args.margin_mm,
+        square_line=square_line, widths=_widths(args), lines=args.lines,
+        grid_line=line, grid_gap=gap, grid_width_mm=grid_w_mm, grid_height_mm=grid_h_mm,
+        direction=args.direction, at_mm=args.at)
+    return _finish(args, screen, placements, report=report)
+
+
 def _cmd_square(args: argparse.Namespace) -> int:
     """One side value for both axes; the core takes side_x and side_y (plan П5б)."""
     screen = _screen(args)
@@ -304,17 +387,23 @@ def _cmd_square(args: argparse.Namespace) -> int:
 
 
 def _emit(args: argparse.Namespace, screen: Screen, figure) -> int:
-    """Marker, placement, PNG and the report — the same tail for every mask pattern."""
+    """One figure with its marker; placed by the same list path as a plate."""
     if args.marker:
         figure = add_marker(screen, figure)
-    image, placed = compose(screen, figure, args.at,
-                            mirror=args.mirror, invert=args.invert)
-    target = write_mask(args.output, screen, figure, image, placed)
-    for line in figure.report:
+    return _finish(args, screen, (place_figure(screen, figure, args.at),),
+                   report=figure.report)
+
+
+def _finish(args: argparse.Namespace, screen: Screen, placements, *,
+            report: tuple[str, ...] = ()) -> int:
+    """Compose the placements, write the PNG and print the report."""
+    image, placed = compose(screen, placements, mirror=args.mirror, invert=args.invert)
+    lines = (*report, *placed)
+    target = write_mask(args.output, screen, lines, image)
+    for line in lines:
         if line.startswith("warning: "):
             print(line, file=sys.stderr)
-    print("\n".join(line for line in figure.report if not line.startswith("warning: ")))
-    print("\n".join(placed))
+    print("\n".join(line for line in lines if not line.startswith("warning: ")))
     print(f"Wrote {target}: {screen.width_px} x {screen.height_px} px")
     return EXIT_OK
 

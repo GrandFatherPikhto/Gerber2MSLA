@@ -23,6 +23,9 @@ gerber2msla masks grid   --screen-px WxH --pixel-um PXxPY -o out/grid.png \
                          [--gap-mm 0.15 | --gap-px 4] [--direction both|x|y] …
 gerber2msla masks square --screen-px WxH --pixel-um PXxPY -o out/square.png \
                          [--side-mm 100 | --side-px N] [--line-mm 0.2 | --line-px 6] …
+gerber2msla masks plate  --screen-px WxH --pixel-um PXxPY -o out/plate.png \
+                         [--plate-mm 70x78] [--margin-mm 2] [--grid-mm 30x30] \
+                         [--widths-mm … | --widths-px …] [--lines 5] …
 ```
 
 `--screen-px` и `--pixel-um` **обязательны и без умолчаний**: выдуманное число хуже отказа.
@@ -38,6 +41,8 @@ gerber2msla masks square --screen-px WxH --pixel-um PXxPY -o out/square.png \
     -o out/grid.png --width-mm 50 --height-mm 40 --line-px 6 --gap-px 4
 .venv/bin/gerber2msla masks square --screen-px 5760x3600 --pixel-um 34x34 \
     -o out/square.png --side-mm 100 --line-mm 0.2
+.venv/bin/gerber2msla masks plate --screen-px 5760x3600 --pixel-um 34x34 \
+    -o out/plate.png --plate-mm 70x78
 ```
 
 * Пиксель может быть неквадратным — две величины, по оси.
@@ -48,8 +53,13 @@ gerber2msla masks square --screen-px WxH --pixel-um PXxPY -o out/square.png \
 * `square` — замкнутый контур; сторона (по умолчанию 100 мм — лазерные 150 мм на этот
   экран не влезают) и линия — целые пиксели СВОЕЙ оси. Отчёт печатает
   `pixel_um_x = measured_x_mm / n_x * 1000` (и Y) с числами этого заказа: измерь обе
-  стороны штангенциркулем и подставь результат в `--pixel-um`. Диагонали — только проверка
-  замера (`d1 = d2` ожидается): у жёсткой сетки экрана перекоса нет, есть масштаб;
+  стороны штангенциркулем, ОТ наружного края до наружного, и подставь результат в
+  `--pixel-um`. Диагонали — только проверка замера (`d1 = d2` ожидается): у жёсткой сетки
+  экрана перекоса нет, есть масштаб;
+* `plate` — все тесты на ОДНОЙ засветке: рамка квадрата (пластина минус поле), одна буква
+  F, `bars` в левой половине и `grid` в правой. Раскладка фиксированная: подписей на маске
+  нет. На пластине умолчание `grid` — 30 x 30 мм: одиночные 50 x 40 в половину не влезают,
+  и отчёт говорит это числами. Пересечение или выход за рамку — отказ, молча не урезается;
 * каждая ширина становится `n = round(ширина / шаг)` пикселей СВОЕЙ оси, и отчёт печатает
   запрошенную ширину рядом с ФАКТИЧЕСКОЙ: 0.100 мм на пикселе 34 мкм — это 3 px =
   0.102 мм. Именно фактическое число и будет на пластине.

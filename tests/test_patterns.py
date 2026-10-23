@@ -21,12 +21,18 @@ Cells:
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 
 from conftest import pixels, run_mask, runs_of_figure
 
 from gerber2msla.cli import main
+from gerber2msla.patterns import (DEFAULT_GRID_GAP_MM, DEFAULT_GRID_LINE_MM,
+                                  DEFAULT_SQUARE_LINE_MM, PLATE_GRID_HEIGHT_MM,
+                                  PLATE_GRID_WIDTH_MM, PLATE_HEIGHT_MM, PLATE_MARGIN_MM,
+                                  PLATE_WIDTH_MM, Width, build_plate)
 
 
 def test_a_width_is_whole_pixels_of_its_own_axis(tmp_path, screen_args, rect_pixel_args):
@@ -251,3 +257,106 @@ def test_the_square_report_carries_the_pixel_formulas(tmp_path, screen_args,
     assert "measure both sides with calipers" in out
     assert "d1 = d2 expected" in out
     assert "theta" not in out, "the LCD grid has no skew: no skew formula"
+
+
+def test_the_square_report_says_outer_edge_to_outer_edge(tmp_path, screen_args,
+                                                         rect_pixel_args, capsys):
+    """`n` is the OUTER size in pixels: the calipers must read outer edge to outer edge."""
+    run_mask(tmp_path, "square", *screen_args, *rect_pixel_args, "--side-mm", "2")
+    out = capsys.readouterr().out
+    assert "OUTER edge to outer edge" in out
+    assert "outer edges are what the formula divides" in out
+
+
+# ──────────────────────────── plate (plan П5б) ─────────────────────────────
+
+PLATE_SCREEN = ("--screen-px", "1200x900", "--pixel-um", "34.4x34.4")
+PLATE_ARGS = (*PLATE_SCREEN, "--plate-mm", "20x16", "--margin-mm", "1",
+              "--widths-mm", "0.2", "--lines", "1", "--grid-mm", "5x5",
+              "--line-mm", "0.1", "--gap-mm", "0.1")
+
+
+def _placement(report: str, name: str) -> tuple[int, int, int, int]:
+    """(x_px, y_px, width_px, height_px) of one figure, read off its report line."""
+    pattern = (rf"^figure {name}: [\d.]+ x [\d.]+ mm \((\d+) x (\d+) px\), "
+               rf".* \((-?\d+), (-?\d+) px\)$")
+    found = re.search(pattern, report, flags=re.MULTILINE)
+    assert found, f"no placement line for figure {name}"
+    width_px, height_px, x_px, y_px = (int(part) for part in found.groups())
+    return x_px, y_px, width_px, height_px
+
+
+def test_every_plate_figure_sits_where_the_report_says(tmp_path, capsys):
+    """A crop of the plate at the reported corner IS the figure a single command draws."""
+    plate = pixels(run_mask(tmp_path, "plate", *PLATE_ARGS, name="plate.png"))
+    report = capsys.readouterr().out
+    assert report.count("figure marker:") == 1, "one F on the plate, not one per figure"
+
+    for name, single_args in (
+        ("bars", ("bars", *PLATE_SCREEN, "--widths-mm", "0.2", "--lines", "1",
+                  "--no-marker", "--at", "0,0")),
+        ("grid", ("grid", *PLATE_SCREEN, "--width-mm", "5", "--height-mm", "5",
+                  "--line-mm", "0.1", "--gap-mm", "0.1", "--direction", "both",
+                  "--no-marker", "--at", "0,0")),
+    ):
+        x_px, y_px, width_px, height_px = _placement(report, name)
+        alone = pixels(run_mask(tmp_path, *single_args, name=f"{name}.png"))
+        assert np.array_equal(plate[y_px:y_px + height_px, x_px:x_px + width_px],
+                              alone[:height_px, :width_px]), \
+            f"the {name} on the plate is the figure the single command draws"
+
+    frame_x, frame_y, frame_w, frame_h = _placement(report, "frame")
+    frame = plate[frame_y:frame_y + frame_h, frame_x:frame_x + frame_w]
+    assert frame[:6, :].all() and frame[-6:, :].all(), "the frame is closed top and bottom"
+    assert frame[:, :6].all() and frame[:, -6:].all(), "the frame is closed left and right"
+
+
+def test_the_plate_names_the_grid_default_it_uses(sixks_screen):
+    """The single grid (50 x 40 mm) does not fit half a plate: the plate default is named."""
+    placements, report = build_plate(
+        sixks_screen, plate_w_mm=PLATE_WIDTH_MM, plate_h_mm=PLATE_HEIGHT_MM,
+        margin_mm=PLATE_MARGIN_MM, square_line=Width(mm=DEFAULT_SQUARE_LINE_MM),
+        widths=(Width(mm=0.2),), lines=5, grid_line=Width(mm=DEFAULT_GRID_LINE_MM),
+        grid_gap=Width(mm=DEFAULT_GRID_GAP_MM), grid_width_mm=PLATE_GRID_WIDTH_MM,
+        grid_height_mm=PLATE_GRID_HEIGHT_MM, direction="both", at_mm=None)
+    text = "\n".join(report)
+    assert [placement.name for placement in placements] == ["frame", "marker", "bars", "grid"]
+    assert "grid on a plate: 30.000 x 30.000 mm" in text
+    assert "not the single-command 50 x 40 mm" in text
+    assert "the left half is 921 px" in text
+    assert "ONE letter F" in text
+
+
+def test_a_plate_larger_than_the_screen_is_refused(tmp_path, capsys):
+    target = tmp_path / "plate.png"
+    assert main(["masks", "plate", *PLATE_SCREEN, "--plate-mm", "100x100",
+                 "-o", str(target)]) == 2
+    err = capsys.readouterr().err
+    assert "does not fit" in err
+    assert "mm" in err and "px" in err
+    assert not target.exists()
+
+
+def test_a_figure_that_does_not_fit_the_frame_is_refused(tmp_path, capsys):
+    """The plate does not shrink the grid to make it fit: it refuses and names it."""
+    target = tmp_path / "plate.png"
+    assert main(["masks", "plate", *PLATE_SCREEN, "--plate-mm", "20x16", "--margin-mm", "1",
+                 "--widths-mm", "0.2", "--lines", "1", "--grid-mm", "15x5",
+                 "--line-mm", "0.1", "--gap-mm", "0.1", "-o", str(target)]) == 2
+    err = capsys.readouterr().err
+    assert "figure grid" in err
+    assert "does not fit the plate frame" in err
+    assert "mm" in err and "px" in err
+    assert not target.exists()
+
+
+def test_the_mirror_reflects_the_whole_plate_once(tmp_path, capsys):
+    direct = pixels(run_mask(tmp_path, "plate", *PLATE_ARGS, name="direct.png"))
+    capsys.readouterr()
+    mirrored = pixels(run_mask(tmp_path, "plate", *PLATE_ARGS, "--mirror",
+                               name="mirrored.png"))
+    report = capsys.readouterr().out
+    assert np.array_equal(mirrored, np.fliplr(direct))
+    assert not np.array_equal(mirrored, direct)
+    assert report.count("figure marker:") == 1, "the F is not drawn per figure"
+    assert "mirror: on" in report

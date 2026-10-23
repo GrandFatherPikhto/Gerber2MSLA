@@ -1,23 +1,19 @@
 # gerber2msla/masks.py
-"""Drawing layer of the MSLA test masks: screen pixels, the marker, the PNG.
+"""Drawing layer of the MSLA test masks: screen pixels, the marker, placement, the PNG.
 
-COPIED from Gerber2LDI `tools/msla_masks.py` at commit 364fd28 (2026-10-23) — the last
-commit that touched the mask files and their cells. Behaviour is unchanged; only the
-module names and the command line moved (`gerber2msla masks bars|grid`). Gerber2LDI keeps
-its copy until the separate move-out task there, after this one is accepted.
+The drawing layer came from Gerber2LDI `tools/msla_masks.py` (commit 364fd28, 2026-10-23);
+since П5б placement is a LIST of figures with pixel positions — one path for a single
+pattern and for a plate of several (plan `png2px6s`). One marker, one mirror and one
+polarity swap are applied to the WHOLE picture in `compose`; an overlap or a figure off
+the screen is a refusal that names the figures, in millimetres and pixels.
 
-This module knows how to turn millimetres into WHOLE pixels of the screen, how to put a
-figure on the screen, how to mark it and how to write the PNG. The PATTERNS live in
-`patterns.py` (this package), the command line in `cli.py`.
+THE PIXEL RULE: `n = round(size / pitch)` pixels of THAT axis. `n = 0` is a refusal — a
+line thinner than a pixel does not exist — and rounding, not truncation, keeps a drawn
+line at the nearest pixel edge instead of making every dimension thinner than asked.
 
-THE PIXEL RULE, and it is the whole reason this file exists: `n = round(size / pitch)`
-pixels of THAT axis. `n = 0` is a refusal — a line thinner than a pixel does not exist —
-and rounding, not truncation, keeps a drawn line at the nearest pixel edge instead of
-making every dimension thinner than asked.
-
-`patterns.py` imports `_quantised` and `_actual` on purpose: the two modules are ONE tool,
-and the leading underscore means "not for the operator", not "not for the other half".
-Nothing here knows what a test pattern is.
+`patterns.py` imports `_quantised` and `_actual` on purpose: the modules are ONE tool, and
+the leading underscore means "not for the operator", not "not for the other half". Nothing
+here knows what a test pattern is.
 
 Standard library + `numpy` + `Pillow` only. Messages are ASCII English ("um", not "µm")
 because they also travel into the PNG text chunk.
@@ -26,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 from PIL import Image, PngImagePlugin
@@ -84,6 +81,21 @@ class Figure:
     @property
     def height_px(self) -> int:
         return int(self.pixels.shape[0])
+
+
+@dataclass(frozen=True, slots=True)
+class Placement:
+    """One figure and the pixel of the screen its top-left corner lands on.
+
+    ``name`` is None for the single pattern of a mask command (the report then says
+    "figure: ..."), and the figure's name on a plate ("figure bars: ...").
+    """
+
+    figure: Figure
+    x_px: int
+    y_px: int
+    name: str | None = None
+    at_mm: tuple[float, float] | None = None
 
 
 # ───────────────────────────── pixel binding ───────────────────────────────
@@ -161,64 +173,114 @@ def add_marker(screen: Screen, figure: Figure) -> Figure:
 
 # ──────────────────────────── placement and output ─────────────────────────
 
-def compose(screen: Screen, figure: Figure, at_mm: tuple[float, float] | None,
-            *, mirror: bool, invert: bool) -> tuple[np.ndarray, tuple[str, ...]]:
-    """Paste the figure onto the screen, then mirror and invert the WHOLE picture."""
+def origin_pixels(screen: Screen, width_px: int, height_px: int,
+                  at_mm: tuple[float, float] | None) -> tuple[int, int]:
+    """Top-left pixel of a ``width_px`` x ``height_px`` box: centred, or at ``at_mm``."""
     if at_mm is None:
-        x_px = (screen.width_px - figure.width_px) // 2
-        y_px = (screen.height_px - figure.height_px) // 2
-        where = "centred"
-    else:
-        x_px = int(round(at_mm[0] / screen.pixel_x_mm))
-        y_px = int(round(at_mm[1] / screen.pixel_y_mm))
-        where = f"at {at_mm[0]:.3f}, {at_mm[1]:.3f} mm from the top-left pixel"
-    inside = (0 <= x_px and 0 <= y_px
-              and x_px + figure.width_px <= screen.width_px
-              and y_px + figure.height_px <= screen.height_px)
-    if not inside:
-        raise Refusal(
-            f"the figure {screen.mm_x(figure.width_px):.3f} x "
-            f"{screen.mm_y(figure.height_px):.3f} mm ({figure.width_px} x "
-            f"{figure.height_px} px) does not fit the {screen.width_px} x "
-            f"{screen.height_px} px screen {where}: it would span {x_px} ... "
-            f"{x_px + figure.width_px} px across and {y_px} ... "
-            f"{y_px + figure.height_px} px down")
+        return ((screen.width_px - width_px) // 2,
+                (screen.height_px - height_px) // 2)
+    return (int(round(at_mm[0] / screen.pixel_x_mm)),
+            int(round(at_mm[1] / screen.pixel_y_mm)))
 
+
+def place_figure(screen: Screen, figure: Figure, at_mm: tuple[float, float] | None,
+                 *, name: str | None = None) -> Placement:
+    """One placement for one figure; a single mask command uses exactly this."""
+    x_px, y_px = origin_pixels(screen, figure.width_px, figure.height_px, at_mm)
+    return Placement(figure=figure, x_px=x_px, y_px=y_px, name=name, at_mm=at_mm)
+
+
+def _label(placement: Placement) -> str:
+    """``figure`` for the single unnamed pattern, ``figure <name>`` for one of many."""
+    return "figure" if placement.name is None else f"figure {placement.name}"
+
+
+def _where(placement: Placement, screen: Screen) -> str:
+    """Where the figure was put, in the operator's terms.
+
+    A single pattern may be centred; a named figure of a plate always has an explicit
+    corner, and that corner is quoted in millimetres and pixels.
+    """
+    if placement.at_mm is not None:
+        return (f"at {placement.at_mm[0]:.3f}, {placement.at_mm[1]:.3f} mm "
+                f"from the top-left pixel")
+    if placement.name is None:
+        return "centred"
+    return (f"at {screen.mm_x(placement.x_px):.3f}, {screen.mm_y(placement.y_px):.3f} mm "
+            f"from the top-left pixel")
+
+
+def compose(screen: Screen, placements: Sequence[Placement], *,
+            mirror: bool, invert: bool) -> tuple[np.ndarray, tuple[str, ...]]:
+    """Paste every figure, then mirror and invert the WHOLE picture.
+
+    One path for one figure and for a plate of several: an unnamed placement is the single
+    pattern, a named one is a figure of the plate. A clash is a refusal — the plate never
+    shrinks a figure silently to make it fit.
+    """
     image = np.zeros((screen.height_px, screen.width_px), dtype=np.uint8)
-    image[y_px:y_px + figure.height_px, x_px:x_px + figure.width_px] = figure.pixels
+    owner = np.full((screen.height_px, screen.width_px), -1, dtype=np.int32)
+    lines: list[str] = []
+    for index, placement in enumerate(placements):
+        figure = placement.figure
+        x_px, y_px = placement.x_px, placement.y_px
+        width_px, height_px = figure.width_px, figure.height_px
+        if not (0 <= x_px and 0 <= y_px
+                and x_px + width_px <= screen.width_px
+                and y_px + height_px <= screen.height_px):
+            raise Refusal(
+                f"the {_label(placement)} {screen.mm_x(width_px):.3f} x "
+                f"{screen.mm_y(height_px):.3f} mm ({width_px} x {height_px} px) does not fit "
+                f"the {screen.width_px} x {screen.height_px} px screen "
+                f"{_where(placement, screen)}: it would span {x_px} ... {x_px + width_px} px across "
+                f"and {y_px} ... {y_px + height_px} px down")
 
-    placed = [
-        f"figure: {screen.mm_x(figure.width_px):.3f} x {screen.mm_y(figure.height_px):.3f} mm "
-        f"({figure.width_px} x {figure.height_px} px), {where} ({x_px}, {y_px} px)",
-    ]
+        painted = figure.pixels > 0
+        taken = owner[y_px:y_px + height_px, x_px:x_px + width_px]
+        clash = taken[painted] >= 0
+        if clash.any():
+            other = placements[int(taken[painted][0])]
+            raise Refusal(
+                f"{_label(placement)} at {x_px}, {y_px} px "
+                f"({screen.mm_x(x_px):.3f}, {screen.mm_y(y_px):.3f} mm) and "
+                f"{_label(other)} at {other.x_px}, {other.y_px} px "
+                f"({screen.mm_x(other.x_px):.3f}, {screen.mm_y(other.y_px):.3f} mm) "
+                f"overlap: both paint the same pixels. The plate does not shrink a figure "
+                f"to make it fit — move it or make it smaller")
+        taken[painted] = index
+        region = image[y_px:y_px + height_px, x_px:x_px + width_px]
+        region[:] = np.maximum(region, figure.pixels)
+        lines.append(
+            f"{_label(placement)}: {screen.mm_x(width_px):.3f} x "
+            f"{screen.mm_y(height_px):.3f} mm ({width_px} x {height_px} px), "
+            f"{_where(placement, screen)} ({x_px}, {y_px} px)")
+
     if mirror:
         image = np.fliplr(image)
-        flipped = screen.width_px - x_px - figure.width_px
-        placed.append(f"mirror: on (the whole picture is reflected along X: on the plate the "
-                      f"figure sits at {flipped} px across = {screen.mm_x(flipped):.3f} mm)")
+        lines.append("mirror: on (the whole picture is reflected along X; a figure at x px "
+                     "of the plate is at width - 1 - x on it)")
     else:
-        placed.append("mirror: off")
+        lines.append("mirror: off")
     if invert:
         image = WHITE - image
-        placed.append("polarity: white = the gaps (inverted: the resist keeps what was NOT lit)")
+        lines.append("polarity: white = the gaps (inverted: the resist keeps what was NOT lit)")
     else:
-        placed.append("polarity: white = the lines (a negative resist keeps what was lit)")
-    return image, tuple(placed)
+        lines.append("polarity: white = the lines (a negative resist keeps what was lit)")
+    return image, tuple(lines)
 
 
-def write_mask(path: str | Path, screen: Screen, figure: Figure,
-               image: np.ndarray, lines: tuple[str, ...]) -> Path:
+def write_mask(path: str | Path, screen: Screen, report: Sequence[str],
+               image: np.ndarray) -> Path:
     """Write the PNG (mode L, exactly the screen) with the report in a text chunk."""
-    report = (
+    text = (
         "msla_tests: a test mask for an MSLA printer",
         f"screen: {screen.width_px} x {screen.height_px} px",
         f"pixel: {screen.pixel_x_um:.2f} x {screen.pixel_y_um:.2f} um",
-        *figure.report,
-        *lines,
+        *report,
     )
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     info = PngImagePlugin.PngInfo()
-    info.add_text(REPORT_KEY, "\n".join(report))
+    info.add_text(REPORT_KEY, "\n".join(text))
     Image.fromarray(image, mode="L").save(target, format="PNG", pnginfo=info)
     return target
