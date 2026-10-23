@@ -77,21 +77,33 @@ build_plate(...) -> (placements, report)
   _require_inside — фигура вне полости рамки: Refusal с именем, мм и пикселями
 ```
 
-## Файл принтера — `gerber2msla/px6s.py` (план П2, П3)
+## Файл принтера: ЧТЕНИЕ — `gerber2msla/px6s.py` (П1)
+
+```
+FileMark        version, table_count, addresses{name: offset}   — адреса блоков из шапки файла
+Header          table_length, pixel_size_um, layer_height_mm, exposure_s, wait_before_cure_s,
+                bottom_exposure_s, bottom_layers (float), lift_*, retract_*, anti_aliasing,
+                resolution_x, resolution_y
+Machine         name, layer_image_format, resolution_x/y, pixel_width/height_um
+                (в настоящих файлах поля пикселя и разрешения отсутствуют — длина 156)
+LayerInfo       data_address, data_length, lift_height_mm, lift_speed_mm_s, exposure_s,
+                layer_height_mm, non_zero_pixels        — одна 32-байтная запись LAYERDEF
+Px6sFile        path, mark, header, machine, layers, _data
+                layer_count; layer_image(index) -> np.uint8 (height, width)
+decode_pw0      RLE «код + длина серии» -> массив (height, width), строка за строкой
+```
+
+Поля, смещения и порядок байт — в `docs/format_px6s.md`; каждый блок там назван классом и методом UVtools
+`86c7c3c`. Описание — единственный вход и для читателя, и для будущего писателя: код UVtools (C#, AGPL)
+не переносится и построчно не переводится.
+
+## Файл принтера: ЗАПИСЬ — `gerber2msla/px6s.py` (план П2, П3)
 
 ```
 шаблон (вход)                      — настоящий однослойный px6s этого принтера, ТОЛЬКО чтение
-  HEADER                           — заголовок: разрешение, размеры, экспозиции, число слоёв, яркость
-  PREVIEW                          — превью
-  LAYERDEF / EXTRA / MACHINE       — подъёмы Z, скорости, служебные блоки v517
-  MODEL                            — строки принтера и модели
-  слои                             — RLE «серость + длина серии»
-
 что утилита МЕНЯЕТ                 — данные слоя 0 (из PNG), ExposureTime и BottomExposureTime
                                      (оба = --exposure-s), число слоёв = 1, BottomLayerCount = 1,
                                      превью = уменьшенная маска
-что утилита НЕ трогает             — всё остальное, байт в байт
+что утилита НЕ трогает             — всё остальное (EXTRA, MACHINE, SOFTWARE, MODEL, служебные
+                                     блоки v517), байт в байт: блоки берутся по адресам
 ```
-
-Поля и их смещения — в `docs/format_px6s.md` (план П1), с источником в UVtools на каждое поле. Описание —
-единственный вход для писателя: код UVtools (C#, AGPL) не переносится и построчно не переводится.
