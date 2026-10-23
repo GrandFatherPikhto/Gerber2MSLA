@@ -107,6 +107,24 @@ Getting the file to the printer: open it in **UVtools** first — the layer must
 mask and the times must be yours — and only then copy it to the printer. Nothing in this
 tool talks to the printer.
 
+## Read a printer file back
+
+```sh
+.venv/bin/gerber2msla dump out/plate_25s.px6s [-o out/layer.png]
+```
+
+* prints what the FILE says, with no interpretation: version and block count, machine name
+  and layer format, resolution and pixel size, both exposure times, bottom layers and layer
+  count, lift height and speeds, and the address of every block; each layer gets its own
+  line — address, length, lift, exposure, non-zero pixels;
+* `-o` saves layer 0 as an 8-bit grey PNG — the very picture `write` encoded, so
+  `masks plate` → `write` → `dump -o` → PNG is a check that needs no printer;
+* a file that is not a `px6s` is refused in one line with code 2, and no PNG is written;
+* `dump` adds no byte-level knowledge: `gerber2msla/px6s.py` had already parsed the blocks,
+  and the format is written down in [docs/format_px6s.md](docs/format_px6s.md). The layer's
+  own exposure time and the header's bottom time are both printed, so the one-layer trap
+  above can be seen in the file itself.
+
 ## Install (development)
 
 ```sh
