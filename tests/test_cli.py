@@ -1,22 +1,24 @@
-"""The CLI: starts, prints help and version, and refuses what it cannot draw.
+"""The ROUTER: starts, prints help and version, and turns a refusal into one line.
 
-The frame cells (П0 of the plan `plan_2026_10_23_png2px6s`) and the command-line cells of
-the mask tool, moved here from Gerber2LDI `tests/test_tools_msla.py` (364fd28) by П4:
-flags and their exclusions, the mandatory screen and pixel, a refusal as ONE line without
-a file left behind. Function names and assertions are the ORIGINAL ones; the command is
-now `gerber2msla masks …`.
+The frame cells (П0 of the plan `plan_2026_10_23_png2px6s`) and what only
+`gerber2msla/cli.py` promises. The masks command line moved to `tests/test_cli_masks.py`
+and the write command line to `tests/test_cli_px6s.py` in the П2 fix: a module's cells
+live in the file of that module, and a move is not a rewrite — the moved cells kept
+their names and assertions.
 
-`test_every_subcommand_has_a_handler` is the NEW cell of П4: it holds the promise of this
-file — a subcommand added to the tree without a handler is noticed here, not on the plate.
+This file keeps two promises of the router itself:
+
+  * `test_every_subcommand_has_a_handler` (the NEW cell of П4) — a subcommand added to the
+    tree without a handler is noticed here, not on the plate;
+  * `test_a_refusal_is_one_line_and_code_two` (П2 fix) — an expected refusal is an answer,
+    not a traceback: one line on stderr, code 2, nothing written. One row per KIND of
+    refusal (a mask that cannot be drawn, a printer file that cannot be read), so that a
+    mutation catching only one of the two is killed here.
 """
 import argparse
-from pathlib import Path
 
-import numpy as np
 import pytest
 from PIL import Image
-
-from conftest import run_mask
 
 from gerber2msla.cli import build_parser, main
 
@@ -63,114 +65,30 @@ def test_every_subcommand_has_a_handler():
         assert callable(sub.get_default("handler")), f"subcommand {name!r} has no handler"
 
 
-@pytest.mark.parametrize("missing", ["--screen-px", "--pixel-um"])
-def test_the_screen_and_the_pixel_are_mandatory(tmp_path, missing, screen_args,
-                                                square_pixel_args):
-    """No invented default: an unverified spec number is worse than a refusal."""
-    given = square_pixel_args if missing == "--screen-px" else screen_args
-    with pytest.raises(SystemExit) as exc:
-        main(["masks", "grid", *given, "-o", str(tmp_path / "grid.png")])
-    assert exc.value.code == 2
+REFUSAL_ROWS = (
+    ("mask", "use either --widths-mm or --widths-px, not both"),
+    ("px6s", "not a px6s"),
+)
+"""The two expected kinds of refusal the router must answer in one line."""
 
 
-def test_both_forms_at_once_are_refused(tmp_path, screen_args, square_pixel_args, capsys):
-    """Millimetres or pixels, never both: two answers to one question cannot be merged."""
-    target = tmp_path / "mask.png"
-    for arguments in (
-        ["masks", "bars", *screen_args, *square_pixel_args, "--widths-mm", "0.2",
-         "--widths-px", "6"],
-        ["masks", "grid", *screen_args, *square_pixel_args, "--line-mm", "0.2",
-         "--line-px", "6"],
-        ["masks", "grid", *screen_args, *square_pixel_args, "--gap-mm", "0.15",
-         "--gap-px", "4"],
-    ):
-        assert main([*arguments, "-o", str(target)]) == 2
-        assert "not both" in capsys.readouterr().err
-    assert not target.exists()
-
-
-def test_grid_takes_its_line_and_gap_in_whole_pixels(tmp_path, screen_args, capsys):
-    run_mask(tmp_path, "grid", *screen_args, "--pixel-um", "100x100",
-             "--width-mm", "1", "--height-mm", "1", "--line-px", "3", "--gap-px", "1",
-             "--at", "0,0", "--no-marker")
-    captured = capsys.readouterr()
-    assert "line: 3 px -> 300.0 um along X, 300.0 um along Y" in captured.out
-    assert "gap: 1 px -> 100.0 um along X, 100.0 um along Y" in captured.out
-    assert "is drawn as" not in captured.err
-
-
-# ─────────────── wiring of the command line (plan П5а, new cells) ──────────
-
-def test_a_command_group_without_a_pattern_is_a_usage_error(capsys):
-    """`masks` alone is a usage error, not a silent exit 0 with help."""
-    with pytest.raises(SystemExit) as exc:
-        main(["masks"])
-    assert exc.value.code == 2
-    assert "usage: gerber2msla" in capsys.readouterr().err
-
-
-def test_at_places_the_figure_and_the_report_says_where(tmp_path, screen_args,
-                                                        rect_pixel_args, capsys):
-    """The flag must reach `compose`, not merely be parsed."""
-    run_mask(tmp_path, "square", *screen_args, *rect_pixel_args, "--side-mm", "2",
-             "--line-mm", "0.2", "--at", "1,1", "--no-marker")
-    assert "at 1.000, 1.000 mm from the top-left pixel" in capsys.readouterr().out
-
-
-def test_the_mask_defaults_are_marker_on_and_offs_off():
-    """The report must not need a flag to be honest: the F is on, mirror and invert are off."""
-    args = build_parser().parse_args(
-        ["masks", "bars", "--screen-px", "240x120", "--pixel-um", "34.4x34.4",
-         "-o", "mask.png"])
-    assert args.marker is True
-    assert args.mirror is False
-    assert args.invert is False
-    assert args.at is None
-
-
-def test_both_square_forms_at_once_are_refused(tmp_path, screen_args, square_pixel_args,
-                                                capsys):
-    """The side and the line are millimetres OR whole pixels, never both."""
-    target = tmp_path / "square.png"
-    for arguments in (
-        ["masks", "square", *screen_args, *square_pixel_args, "--side-mm", "2",
-         "--side-px", "40"],
-        ["masks", "square", *screen_args, *square_pixel_args, "--line-mm", "0.2",
-         "--line-px", "6"],
-    ):
-        assert main([*arguments, "-o", str(target)]) == 2
-        assert "not both" in capsys.readouterr().err
-    assert not target.exists()
-
-
-def test_side_px_reaches_the_square_builder(tmp_path, screen_args, rect_pixel_args,
-                                            capsys):
-    """The flag is parsed AND used: 40 px, not a fallback to the 100 mm default."""
-    run_mask(tmp_path, "square", *screen_args, *rect_pixel_args, "--side-px", "40",
-             "--line-px", "2", "--at", "0,0", "--no-marker")
-    out = capsys.readouterr().out
-    assert "drawn: 40 x 40 px" in out
-    assert "1.376 x 1.200 mm" in out, "one count, two physical sides"
-
-
-def test_plate_mm_reaches_the_layout(tmp_path, capsys):
-    """The plate size is parsed AND used: 20 x 16 mm on the plate line, not the default."""
-    run_mask(tmp_path, "plate", "--screen-px", "1200x900", "--pixel-um", "34.4x34.4",
-             "--plate-mm", "20x16", "--margin-mm", "1", "--widths-mm", "0.2",
-             "--lines", "1", "--grid-mm", "5x5", "--line-mm", "0.1", "--gap-mm", "0.1")
-    assert "plate: 20.000 x 16.000 mm" in capsys.readouterr().out
-
-
-def test_write_refuses_a_mask_that_is_not_mode_l(tmp_path, capsys):
-    """A colour PNG is not a mask: one line, code 2, and no file left behind."""
-    template = Path(__file__).resolve().parents[1] / "tests" / "data" / "01_test02.px6s"
-    if not template.is_file():
-        pytest.skip("no tests/data/01_test02.px6s: the template is copied in with the writer")
-    mask = tmp_path / "rgb.png"
-    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8), mode="RGB").save(mask)
-    target = tmp_path / "out.px6s"
-    assert main(["write", str(mask), "--template", str(template), "-o", str(target),
-                 "--exposure-s", "25"]) == 2
+@pytest.mark.parametrize("kind, expected", REFUSAL_ROWS)
+def test_a_refusal_is_one_line_and_code_two(tmp_path, kind, expected, capsys):
+    """A refusal is an answer: one line on stderr, code 2, no traceback, no file."""
+    target = tmp_path / "out.bin"
+    if kind == "mask":
+        arguments = ["masks", "bars", "--screen-px", "240x120", "--pixel-um", "34.4x34.4",
+                     "--widths-mm", "0.2", "--widths-px", "6", "-o", str(target)]
+    else:
+        mask = tmp_path / "mask.png"
+        Image.new("L", (8, 8), 0).save(mask)
+        template = tmp_path / "not-a.px6s"
+        template.write_bytes(b"NOTAPX6S" + b"\x00" * 64)
+        arguments = ["write", str(mask), "--template", str(template), "-o", str(target),
+                     "--exposure-s", "25"]
+    assert main(arguments) == 2
     err = capsys.readouterr().err
-    assert "mode L" in err and "RGB" in err
+    assert expected in err, f"the refusal must say what is wrong: {err!r}"
+    assert len(err.strip().splitlines()) == 1, f"one line, not a traceback: {err!r}"
+    assert "Traceback" not in err
     assert not target.exists()

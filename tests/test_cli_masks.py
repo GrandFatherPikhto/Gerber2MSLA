@@ -1,0 +1,112 @@
+"""The `masks` command line: mandatory numbers, exclusions, defaults, wiring.
+
+These cells moved out of `tests/test_cli.py` in the П2 fix, unchanged: a module's cells
+live in the file of that module (`gerber2msla/cli_masks.py`), the same way the router cells
+stay in `tests/test_cli.py`. Function names and assertions are the ORIGINAL ones from
+Gerber2LDI `tests/test_tools_msla.py` (364fd28); the command is `gerber2msla masks …`.
+
+A move is not a rewrite: `git diff --color-moved` shows these cells carried over.
+"""
+import pytest
+
+from conftest import run_mask
+
+from gerber2msla.cli import build_parser, main
+
+
+@pytest.mark.parametrize("missing", ["--screen-px", "--pixel-um"])
+def test_the_screen_and_the_pixel_are_mandatory(tmp_path, missing, screen_args,
+                                                square_pixel_args):
+    """No invented default: an unverified spec number is worse than a refusal."""
+    given = square_pixel_args if missing == "--screen-px" else screen_args
+    with pytest.raises(SystemExit) as exc:
+        main(["masks", "grid", *given, "-o", str(tmp_path / "grid.png")])
+    assert exc.value.code == 2
+
+
+def test_both_forms_at_once_are_refused(tmp_path, screen_args, square_pixel_args, capsys):
+    """Millimetres or pixels, never both: two answers to one question cannot be merged."""
+    target = tmp_path / "mask.png"
+    for arguments in (
+        ["masks", "bars", *screen_args, *square_pixel_args, "--widths-mm", "0.2",
+         "--widths-px", "6"],
+        ["masks", "grid", *screen_args, *square_pixel_args, "--line-mm", "0.2",
+         "--line-px", "6"],
+        ["masks", "grid", *screen_args, *square_pixel_args, "--gap-mm", "0.15",
+         "--gap-px", "4"],
+    ):
+        assert main([*arguments, "-o", str(target)]) == 2
+        assert "not both" in capsys.readouterr().err
+    assert not target.exists()
+
+
+def test_grid_takes_its_line_and_gap_in_whole_pixels(tmp_path, screen_args, capsys):
+    run_mask(tmp_path, "grid", *screen_args, "--pixel-um", "100x100",
+             "--width-mm", "1", "--height-mm", "1", "--line-px", "3", "--gap-px", "1",
+             "--at", "0,0", "--no-marker")
+    captured = capsys.readouterr()
+    assert "line: 3 px -> 300.0 um along X, 300.0 um along Y" in captured.out
+    assert "gap: 1 px -> 100.0 um along X, 100.0 um along Y" in captured.out
+    assert "is drawn as" not in captured.err
+
+
+# ─────────────── wiring of the command line (plan П5а, new cells) ──────────
+
+def test_a_command_group_without_a_pattern_is_a_usage_error(capsys):
+    """`masks` alone is a usage error, not a silent exit 0 with help."""
+    with pytest.raises(SystemExit) as exc:
+        main(["masks"])
+    assert exc.value.code == 2
+    assert "usage: gerber2msla" in capsys.readouterr().err
+
+
+def test_at_places_the_figure_and_the_report_says_where(tmp_path, screen_args,
+                                                        rect_pixel_args, capsys):
+    """The flag must reach `compose`, not merely be parsed."""
+    run_mask(tmp_path, "square", *screen_args, *rect_pixel_args, "--side-mm", "2",
+             "--line-mm", "0.2", "--at", "1,1", "--no-marker")
+    assert "at 1.000, 1.000 mm from the top-left pixel" in capsys.readouterr().out
+
+
+def test_the_mask_defaults_are_marker_on_and_offs_off():
+    """The report must not need a flag to be honest: the F is on, mirror and invert are off."""
+    args = build_parser().parse_args(
+        ["masks", "bars", "--screen-px", "240x120", "--pixel-um", "34.4x34.4",
+         "-o", "mask.png"])
+    assert args.marker is True
+    assert args.mirror is False
+    assert args.invert is False
+    assert args.at is None
+
+
+def test_both_square_forms_at_once_are_refused(tmp_path, screen_args, square_pixel_args,
+                                                capsys):
+    """The side and the line are millimetres OR whole pixels, never both."""
+    target = tmp_path / "square.png"
+    for arguments in (
+        ["masks", "square", *screen_args, *square_pixel_args, "--side-mm", "2",
+         "--side-px", "40"],
+        ["masks", "square", *screen_args, *square_pixel_args, "--line-mm", "0.2",
+         "--line-px", "6"],
+    ):
+        assert main([*arguments, "-o", str(target)]) == 2
+        assert "not both" in capsys.readouterr().err
+    assert not target.exists()
+
+
+def test_side_px_reaches_the_square_builder(tmp_path, screen_args, rect_pixel_args,
+                                            capsys):
+    """The flag is parsed AND used: 40 px, not a fallback to the 100 mm default."""
+    run_mask(tmp_path, "square", *screen_args, *rect_pixel_args, "--side-px", "40",
+             "--line-px", "2", "--at", "0,0", "--no-marker")
+    out = capsys.readouterr().out
+    assert "drawn: 40 x 40 px" in out
+    assert "1.376 x 1.200 mm" in out, "one count, two physical sides"
+
+
+def test_plate_mm_reaches_the_layout(tmp_path, capsys):
+    """The plate size is parsed AND used: 20 x 16 mm on the plate line, not the default."""
+    run_mask(tmp_path, "plate", "--screen-px", "1200x900", "--pixel-um", "34.4x34.4",
+             "--plate-mm", "20x16", "--margin-mm", "1", "--widths-mm", "0.2",
+             "--lines", "1", "--grid-mm", "5x5", "--line-mm", "0.1", "--gap-mm", "0.1")
+    assert "plate: 20.000 x 16.000 mm" in capsys.readouterr().out
