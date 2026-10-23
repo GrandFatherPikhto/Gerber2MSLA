@@ -22,6 +22,12 @@ dependencies = [
     "numpy==2.5.4",
     # PNG: mode L, exactly the LCD resolution, the report in a text chunk.
     "pillow==13.0.0",
+    # Gerber X2/RS-274X AND Excellon parsing with an object model (primitives with
+    # polarity) — the input of `gerber_source`. The same pin as Gerber2LDI 3c77f9f,
+    # because the reader is COPIED from there (plan Г0): 1.6.3 is the version the
+    # copy was measured against, and `Rectangle.to_arc_poly()` is worked around on
+    # exactly this version (it returns the bbox of a rotated rectangle).
+    "gerbonara==1.6.3",
 ]
 
 [project.optional-dependencies]
