@@ -1,0 +1,42 @@
+# The real HeatingTable board of the controller project (STM32F103C8T6), said as a config.
+#
+# `gerber/` below is a PLACEHOLDER: those files live in the KiCad project
+# `ControllerSTM32F103C8T6/gerber/`, outside this repository. Either copy this file next to
+# that folder (then `gerber/` is right as written), or rewrite the six paths to point at it.
+# Nothing machine-specific is committed here on purpose (plan Б2).
+#
+# What it writes into `../out/HeatingTable/` — one picture per file, and no drawing twice:
+#
+#   top.px6s, bottom.px6s              the working files: tented, holes NOT poured
+#   top_align.px6s, bottom_align.px6s  ALWAYS with the holes — the sides are aligned by them
+#   the same four as .png              because png = true; a PNG and its .px6s are one picture
+#   board_report.txt                   the whole report and this text, whole
+#
+# ONE Edge_Cuts file fixes the frame of EVERY file of the board: the top and the bottom land
+# on the same pixels of the screen, which is the whole point of aligning them later.
+
+[output]                                    # everything about the printer (plan Б0)
+template = "../tests/data/01_test02.px6s"   # the screen and the header pixel come from HERE
+dir = "../out/HeatingTable"
+png = true                                  # also <side>.png next to every printer file
+# pixel_um = [34.0, 34.0]                   # optional: measured by the square; the header stays
+
+[board]
+outline = "gerber/ControllerSTM32F103C8T6-Edge_Cuts.gbr"
+drills = ["gerber/ControllerSTM32F103C8T6-PTH.drl", "gerber/ControllerSTM32F103C8T6-NPTH.drl"]
+
+[[side]]
+name = "top"
+copper = "gerber/ControllerSTM32F103C8T6-F_Cu.gbr"
+mirror = false
+holes = false                               # tenting: the working mask keeps the holes white
+exposure_s = 25
+align_s = 1                                 # -> top_align.px6s, with the holes, 1 s
+
+[[side]]
+name = "bottom"
+copper = "gerber/ControllerSTM32F103C8T6-B_Cu.gbr"
+mirror = true                               # the bottom is seen through the board
+holes = false
+exposure_s = 25
+align_s = 1

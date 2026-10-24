@@ -82,17 +82,21 @@ measurement. The real pixel is measured with the `square` (see below), one axis 
 ## A plate from a config
 
 The built-in plate is one layout. Your own plate is a **TOML** file: what lies where, in
-millimetres from the plate's own top-left corner.
+millimetres from the plate's own top-left corner — and which printer file draws it, and
+where the results go.
 
 ```sh
-# a mask, or a printer file straight away
-.venv/bin/gerber2msla masks plate --config examples/plate_70x78.toml \
-    --screen-px 5760x3600 --pixel-um 34x34 -o out/plate.png
-.venv/bin/gerber2msla masks plate --config examples/plate_70x80_25s.toml \
-    --template real.px6s -o out/plate_25s.px6s
+# the whole job is the file: no -o, no --template, no screen (they are refused by name)
+.venv/bin/gerber2msla masks plate --config examples/plate_70x80_25s.toml
 ```
 
 ```toml
+[output]                         # everything about the printer (plan Б0)
+template = "../tests/data/01_test02.px6s"   # the screen and the header pixel come from HERE
+px6s = "../out/plate_70x80_25s.px6s"        # optional
+png = "../out/plate_70x80_25s.png"          # optional; at least one of px6s / png
+# pixel_um = [34.0, 34.0]        # optional MEASUREMENT: the geometry moves, the header does not
+
 [plate]
 width_mm = 70
 height_mm = 78
@@ -124,9 +128,18 @@ gap = "same"                     # gap = the stripe width; or gap_mm / gap_px
   becomes a default.
 * **One source of truth.** Next to `--config`, the built-in layout flags (`--plate-mm`,
   `--at`, `--widths-*`, `--lines`, `--grid-mm`, `--margin-mm`, `--square-line-*`,
-  `--line-*`, `--gap-*`, `--direction`) and `--exposure-s` are refused by name: the
-  config answers those questions. The plate is centred on the screen; a figure that
-  leaves the plate or overlaps another is refused with both names, never shrunk.
+  `--line-*`, `--gap-*`, `--direction`), `--exposure-s`, `-o`, `--template`,
+  `--screen-px` and `--pixel-um` are refused by name: the config answers those questions.
+  The plate is centred on the screen; a figure that leaves the plate or overlaps another
+  is refused with both names, never shrunk.
+* **`[output]` is the printer and the output, and nothing else.** Its paths count from the
+  config FILE, not from your shell's directory (the folder is created). `template` is
+  always required — even for a PNG-only config, because the screen is the printer's, not a
+  guess. A `.px6s` takes its time from `[plate] exposure_s`: a config that writes one
+  without it is refused with the key's name.
+* **One picture, two files.** A `png` and a `.px6s` of one call come out of ONE `compose`,
+  so they cannot differ by a pixel. Overwriting is allowed and the report says
+  `overwrote <path>`: a config is a recipe, and the file is made again from it.
 * **`patches`** rows: the left square of a row holds stripes along X (the Y resolution
   shows), the right one stripes along Y (the X resolution). A stripe is drawn whole and
   the first is flush with the near edge — the leftover at the far edge is a gap, because
@@ -137,6 +150,47 @@ gap = "same"                     # gap = the stripe width; or gap_mm / gap_px
 * `examples/plate_70x78.toml` is the built-in plate written as a config — the ORACLE:
   its PNG is pixel-for-pixel the PNG without `--config`.
   `examples/plate_70x78_patches.toml` is the same plate with 10 mm patches.
+
+## A board from a config
+
+```sh
+.venv/bin/gerber2msla board --config examples/board_heatingtable.toml
+```
+
+```toml
+[output]                                    # the same table as the plate's
+template = "../tests/data/01_test02.px6s"
+dir = "../out/HeatingTable"                 # <side>.px6s, <side>_align.px6s, board_report.txt
+png = true                                  # required: also <side>.png next to every file
+
+[board]
+outline = "gerber/...-Edge_Cuts.gbr"        # required: ONE frame for every file of the board
+drills = ["gerber/...-PTH.drl", "gerber/...-NPTH.drl"]
+
+[[side]]
+name = "top"                                # -> top.px6s, top_align.px6s
+copper = "gerber/...-F_Cu.gbr"
+mirror = false
+holes = false                               # false = tenting; true = holes poured in the working mask too
+exposure_s = 25
+align_s = 1                                 # optional: <name>_align.px6s, WITH the holes, 1 s
+```
+
+* **One frame for the whole board.** `outline` is required here — on the single-file command
+  line it is only a warning, but two sides of one board cannot be lined up without a shared
+  frame. The report prints that frame once; every file carries it in its own chunk.
+* **The alignment file always has the holes** and its own `align_s`: it is the file the two
+  sides are aligned by. `align_s` without `drills` is refused — there is nothing to align by.
+* **A side is a file name**: `name` is `[a-z0-9_-]+` and unique, and it becomes `<name>.px6s`.
+* **Strict like the plate**: an unknown key, a missing key, a wrong type, a syntax error with
+  the LINE NUMBER. Next to `--config` every flag is refused by name — including the copper
+  argument and `-o`.
+* **Paths count from the config file**, overwriting is allowed (`overwrote <path>`), and
+  `board_report.txt` next to the files keeps the whole report and the config text.
+* `examples/board_heatingtable.toml` is the real HeatingTable board with a `gerber/`
+  placeholder: copy it next to the KiCad project's `gerber/` folder, or fix the paths.
+  `diagnostics/probe_board_config_2026_10_24.py` runs it on the real board through a
+  temporary copy and leaves `out/HeatingTable/` for UVtools.
 
 ## Write a printer file
 

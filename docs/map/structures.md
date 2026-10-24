@@ -192,13 +192,15 @@ write_series(template, mask, prefix, times)
 report(files)                      таблица «файл → обычное и нижнее», прочитанная ИЗ файлов
 ```
 
-## CLI — три модуля (П2, П3, П5в)
+## CLI — четыре модуля (Г2, П2, П3, П5в, Б2)
 
 ```
 cli.py        корень: prog, --version, сборка подкоманд, ловля Refusal/Px6sError, код 2
 cli_masks.py  группа `masks`: bars, grid, square, plate (перенесена без изменения флагов)
 cli_px6s.py   `write`: маска PNG -> write_file -> отчёт; `dump`: read_file -> строки
               -> stdout, по `-o` слой 0 в PNG; `dose`: времена -> dose.write_series -> таблица
+cli_board.py  `board`: одна медь или `--config`; BOARD_FLAGS — что рядом с конфигом отказ
+              по имени; экран и пиксель — screen_choice.screen_for; работа — board_files
 ```
 
 Маски НЕ переезжают в px6s-модуль: разделение — «маски здесь, write/dump/dose там».
@@ -211,9 +213,16 @@ PlateConfig                     — прочитанный конфиг, ещё 
   exposure_s: float | None      — [plate] exposure_s; нужен для .px6s
   marker_at_mm: tuple | None    — None = [marker] нет = метки нет
   figures: tuple[FigureSpec,…]  — в порядке ФАЙЛА
+  output: PlateOutput           — [output] (Б0): принтер и выход
   text: str                     — файл целиком, как прочитан (уезжает в кусок PNG)
   path: Path | None             — для сообщений; None у текста из памяти
   label                         — «<config>» или путь
+
+PlateOutput                     — всё про принтер, ни одного «умолчания»
+  template: Path                — ОБЯЗАТЕЛЕН всегда: экран и пиксель заголовка — из него
+  pixel_um: tuple | None        — ЗАМЕР: меняет геометрию, заголовок файла — нет (Г2)
+  px6s, png: Path | None        — хотя бы один («the config writes nothing»); оба — из
+                                  ОДНОЙ картинки compose
 
 FigureSpec = SquareSpec | GridSpec | BarsSpec | PatchesSpec
   name: str                     — «kind #N», N с 1 по порядку в файле: этим именем
@@ -223,12 +232,16 @@ FigureSpec = SquareSpec | GridSpec | BarsSpec | PatchesSpec
                                   BarsSpec widths+lines; PatchesSpec patch_mm+
                                   patch_gap_mm+widths+gap (None = «зазор = ширина»)
 
-parse_plate_config(text, source=…, path=…) -> PlateConfig
+parse_plate_config(text, *, source=…, base=None, path=None) -> PlateConfig
   tomllib.loads; TOMLDecodeError -> Refusal с НОМЕРОМ СТРОКИ (lineno, затем текст)
-  _table/_keys/_required  — на КАЖДОМ уровне: корень, [plate], [marker], фигура, {from,to,step}
-  _number/_whole/_pair/_string — bool не число, px только целое, пара ровно из двух
+  _table/_keys/_required  — на КАЖДОМ уровне: корень, [output], [plate], [marker], фигура,
+                            {from,to,step}; умолчаний нет ни у одного ключа
+  _number/_whole/_pair/_string/_flag — bool не число, px только целое, пара ровно из двух
   _widths/_range        — список ИЛИ {from, to, step} включительно, допуск 1e-9
-load_plate_config(path) — read_text UTF-8 -> parse; нет файла/не UTF-8 — Refusal одной строкой
+  _resolve/_must_exist  — пути от КАТАЛОГА КОНФИГА (normpath); нет входного файла — отказ
+                          с КЛЮЧОМ и путём
+load_plate_config(path) — read_text UTF-8 -> parse -> _must_exist(шаблон); нет файла или
+                          не UTF-8 — Refusal одной строкой
 
 build_config_plate(screen, config) -> (placements, report)
   пластина: _quantised по каждой оси, origin_pixels(…, None) = ЦЕНТР экрана
@@ -241,6 +254,54 @@ build_config_plate(screen, config) -> (placements, report)
 Кусок PNG: `masks.write_mask(..., config_text=…)` кладёт текст конфига в iTXt под ключом
 `plate_config`; кусок отчёта `msla_tests` при этом не меняется — на этом стоит оракул К2
 («пример = зашитая раскладка» сравнивается по пикселям).
+
+## Строгие помощники — `gerber2msla/config_strict.py` (Б1, переезд из `plate_config.py`)
+
+```
+_keys(table, known, where, source)        — неизвестный ключ: отказ с ИМЕНЕМ и списком известных
+_required(table, key, where, source)      — отсутствующий ключ: «no defaults», отказ с именем
+_number/_whole/_pair/_flag/_text/_string  — тип: bool НЕ число (сравнение по identity)
+_syntax_line(error)                       — TOMLDecodeError.lineno/colno (3.14) или regex (3.11/3.12)
+_loads/_read_text                         — tomllib.loads; файл читается UTF-8, иначе отказ
+_resolve(value, base)                     — относительный путь от КАТАЛОГА КОНФИГА, normpath
+_must_exist(target, key, where, source)   — нет входного файла: отказ с КЛЮЧОМ и путём
+```
+
+Один модуль на два конфига: таблицы ключей объявляет каждый конфиг (`FIGURE_KEYS`,
+`OUTPUT_KEYS`, `BOARD_KEYS`, `SIDE_KEYS`), отказы — общие. Второй копии разбора нет.
+
+## Конфиг платы — `gerber2msla/board_config.py` (Б1) и `board_files.py` (Б2)
+
+```
+BoardConfig                     — прочитанная плата, ещё БЕЗ пикселей
+  outline: Path                 — ОБЯЗАТЕЛЕН: одна рамка на все файлы платы
+  drills: tuple[Path, …]        — пусто законно (тент), но align_s или holes = true без них — отказ
+  output: BoardOutput           — [output]: template, dir, png (bool), необязательный pixel_um
+  sides: tuple[SideSpec, …]     — в порядке файла; имена уникальны и файловые
+  text: str, path: Path | None, label
+  pixel_um                      — свойство: output.pixel_um (замер; заголовок не меняется)
+
+SideSpec
+  name: str                     — [a-z0-9_-]+; из него <name>.px6s и <name>_align.px6s
+  copper, mirror, holes, exposure_s, align_s: float | None
+  exposure_file / align_file    — имена файлов: ОДНО место их сборки
+
+parse_board_config(text, *, source, base, path) -> BoardConfig
+load_board_config(path)         — плюс _must_exist на шаблон, контур, сверловку и медь сторон
+
+write_board(screen, config, *, pixel_line) -> tuple[str, …]
+  папка        [output] dir, mkdir(parents=True); перезапись разрешена (строка overwrote)
+  _picture     build_board(drills по with_holes) -> compose(зеркало стороны): ОДНА картинка
+  _write_px6s  П2-писатель, второго пути записи нет; своё время на каждый файл
+  _write_png   тот же кадр в PNG, текст конфига целым (write_mask(config_text=…))
+  _without_frame  строка frame: печатается ОДИН раз на всю плату (в кусках PNG — в каждом)
+  _drilled     строки сверловки фигуры как есть: второго счёта отверстий нет
+  board_report.txt  отчёт целиком + текст конфига
+```
+
+Экран и пиксель выбирает вызывающий: `cli_board` зовёт `screen_choice.screen_for` с
+`SimpleNamespace(screen_px=None, pixel_um=config.pixel_um)` — тот же ответ, что у одиночной
+команды (шаблон фиксирует экран, замер меняет только геометрию).
 
 ## Команда `dump` — `gerber2msla/cli_px6s.py` (П3)
 

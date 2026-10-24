@@ -308,3 +308,28 @@ def test_a_missing_input_file_is_refused_with_its_key_and_path(tmp_path):
     assert "'drills[0]'" in message, "the KEY of the missing input, not just a path"
     assert str(tmp_path / "pth.drl") in message, "and the path it was resolved to"
     assert "no such file exists" in message
+
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+
+
+def test_the_board_example_parses_with_the_sides_it_names():
+    """`examples/board_heatingtable.toml` is committed, so a typo in it breaks a cell.
+
+    Its input paths are a placeholder (`gerber/` next to the file, plan Б2), so only the
+    PARSE runs here; `load` would demand files that belong to Denis's KiCad project, and
+    `diagnostics/probe_board_config_2026_10_24.py` is what runs the real board.
+    """
+    path = EXAMPLES / "board_heatingtable.toml"
+    config = parse_board_config(path.read_text(encoding="utf-8"), source=str(path),
+                                base=EXAMPLES)
+    assert [side.name for side in config.sides] == ["top", "bottom"]
+    assert [side.mirror for side in config.sides] == [False, True]
+    assert [side.holes for side in config.sides] == [False, False]
+    assert [side.align_s for side in config.sides] == [1.0, 1.0]
+    assert [side.exposure_s for side in config.sides] == [25.0, 25.0]
+    assert config.output.png is True
+    assert config.output.dir == EXAMPLES.parent / "out" / "HeatingTable", \
+        "the folder counts from the config's own directory"
+    assert config.outline.name.endswith("-Edge_Cuts.gbr")
+    assert len(config.drills) == 2

@@ -32,10 +32,15 @@ Gerber2MSLA, 23.10.2026, по образцу Gerber2LDI `docs/map/map.md`. «П�
 | пластина: рамка, одна метка, bars слева, grid справа | `gerber2msla/patterns.py:324` (`build_plate`), `gerber2msla/cli_masks.py:335` (`_cmd_plate`) | есть | раскладка ФИКСИРОВАННАЯ — подписей на маске нет, раскладка и есть подпись; умолчания пластины 70x78 мм, поле 2 мм, grid 30x30 мм названы в отчёте числами; фигура за рамкой/пересечение — отказ, не урезание |
 | пластина из TOML-конфига: чтение СТРОГОЕ, умолчаний нет | `gerber2msla/plate_config.py:402` (`parse_plate_config`), `:339` (`_figure`), `:193` (`_keys`), `:202` (`_required`), `:67` (`FIGURE_KEYS`) | есть | `FIGURE_KEYS` — ОДНА таблица и на проверку фигуры, и на текст отказа; неизвестный И отсутствующий ключ — отказ с именем; `bool` — не число, пиксельный ключ — только целое; `{from, to, step}` включительно с допуском `1e-9`; синтаксис — номер строки из `TOMLDecodeError.lineno` (`_syntax_line`, `:388`) |
 | пластина из конфига: раскладка и её отказы | `gerber2msla/plate_layout.py:72` (`build_config_plate`), `:56` (`_require_on_plate`), `gerber2msla/cli_masks.py` (`_plate_from_config`) | есть | пластина по центру своего экрана; `at_mm` считается от УГЛА ПЛАСТИНЫ (в `Placement` уходит `None`, поэтому `compose` печатает мм ЭКРАНА); имена `kind #N`; пластина больше экрана и фигура за пластиной — отказ с именами; пересечение — `compose` |
-| конфиг — ОДИН источник правды | `gerber2msla/cli_masks.py` (`_refuse_layout_flags`, `_plate_from_config`) | есть | флаг раскладки рядом с `--config` — отказ ПО ИМЕНИ, не «молча проигнорирован»; `--exposure-s` рядом с `--config` — отказ; `.px6s` берёт время из `[plate] exposure_s`, без него — отказ с именем ключа; без `--config` — зашитая раскладка как была |
+| конфиг — ОДИН источник правды | `gerber2msla/cli_masks.py` (`_refuse_layout_flags`, `_plate_from_config`) | есть | флаг раскладки рядом с `--config` — отказ ПО ИМЕНИ, не «молча проигнорирован»; `--exposure-s`, `-o`, `--template`, `--screen-px`, `--pixel-um` — там же; `.px6s` берёт время из `[plate] exposure_s`, без него — отказ с именем ключа; без `--config` — зашитая раскладка как была |
+| выход и принтер — в `[output]`, пути от файла конфига | `gerber2msla/plate_config.py` (`PlateOutput`, `_output`), `gerber2msla/config_strict.py` (`_resolve`, `_must_exist`) | есть | `template` обязателен всегда; `px6s`/`png` — хотя бы один; `pixel_um` — замер (заголовок не меняется); пути от КАТАЛОГА КОНФИГА, каталог создаётся; перезапись `overwrote`; PNG и `.px6s` — из одной картинки |
 | `patches`: квадраты с полосами | `gerber2msla/patterns.py:273` (`build_patches`), `:207` (`_fit_count`) | есть | ряд на ширину, слева полосы вдоль X, справа вдоль Y; `patch_gap_mm` — одно число на зазор в ряду И между рядами; полоса только целиком, первая у края — правило `_fit_count`, общее с `grid` |
-| экран и пиксель — ОДНА функция на все команды | `gerber2msla/screen_choice.py:28` (`screen_for`) | есть | с `--template` разрешение из файла, `--screen-px` — отказ; `--pixel-um` меняет только геометрию; зовут `board` и `masks plate` |
+| экран и пиксель — ОДНА функция на все команды | `gerber2msla/screen_choice.py:28` (`screen_for`) | есть | с `--template` разрешение из файла, `--screen-px` — отказ; `--pixel-um` меняет только геометрию; зовут `board`, `masks plate` и оба конфига (пиксель — из `[output]`) |
 | кусок `plate_config` в PNG | `gerber2msla/masks.py` (`write_mask(..., config_text=…)`, `CONFIG_KEY`), `gerber2msla/cli_masks.py` (`_plate_from_config`) | есть | iTXt + UTF-8, текст конфига ЦЕЛИКОМ байт в байт (русские комментарии — обычный случай, tEXt их не примет); кусок отчёта `msla_tests` не меняется; отчёт команды печатает конфиг целиком после таблицы фигур |
+| строгие помощники конфигов — ОДИН модуль | `gerber2msla/config_strict.py` (`_keys`, `_required`, `_number`, `_flag`, `_text`, `_syntax_line`, `_resolve`, `_must_exist`) | есть | переехали из `plate_config.py` (план Б1): таблицы ключей объявляет каждый конфиг, отказы общие — второй копии разбора нет |
+| плата из TOML-конфига: чтение СТРОГОЕ | `gerber2msla/board_config.py` (`parse_board_config`, `_output`, `_side`, `SIDE_NAME`) | есть | `[output]`, `[board]`, `[[side]]`; `outline` обязателен, `align_s`/`holes = true` без `drills` — отказ, имя стороны — имя файла и без повторов |
+| плата из конфига: папка, файлы, отчёт | `gerber2msla/board_files.py` (`write_board`, `_picture`, `_write_px6s`, `_write_png`, `_without_frame`) | есть | одна картинка на файл из ОДНОГО `compose`; `_align` ВСЕГДА с отверстиями и своим временем; строка `frame:` одна на всю плату; `board_report.txt` = отчёт + текст конфига; перезапись `overwrote` |
+| конфиг платы — ОДИН источник правды | `gerber2msla/cli_board.py` (`BOARD_FLAGS`, `_refuse_board_flags`, `_cmd_board`) | есть | двенадцать флагов рядом с `--config` (включая аргумент меди и `-o`) — отказ по имени; без конфига медь и `-o` обязательны |
 | ширина из заказа в пиксели | `gerber2msla/patterns.py:79` (`_width_pixels`) | есть | пиксельный заказ — ровно `n`; мм — через `_quantised` |
 | отклонение мм-заказа больше 10 % | `gerber2msla/patterns.py:101` (`_deviation`) | есть | порог строгий (`> 0.10`); у пиксельного заказа отклонения нет |
 | две ширины в одно `n` | `gerber2msla/patterns.py:115` (`_duplicates`) | есть | предупреждение, не отказ |
@@ -98,6 +103,20 @@ gerber2msla board F_Cu.gbr --drill PTH.drl --outline Edge_Cuts.gbr --template T.
              платы; stderr — строки warning:; код 2 — отказ одной строкой
 ```
 
+**Плата из TOML-конфига (план Б2):**
+```
+gerber2msla board --config board.toml
+  cli_board:  флаг рядом с --config — отказ по имени (и аргумент меди тоже); шаблон из
+              [output] читается, screen_for(экран шаблона, pixel_um из [output]) — тот же
+              ответ, что у одиночной команды
+  board_files: на каждую сторону build_board → compose(зеркало стороны) → файл принтера;
+              при png = true тот же кадр в PNG; _align — та же медь С отверстиями и своим
+              временем; строка frame: печатается ОДИН раз на всю плату
+  board_config: строгое чтение [output]/[board]/[[side]], умолчаний нет
+  stdout:     одна строка frame:, по стороне «медь, зеркало, отверстия, время», белое px/мм²,
+              Wrote/overwrote на каждый файл; board_report.txt — то же + текст конфига
+```
+
 Круг проверки: PNG → `.px6s` → `dump` → PNG пиксель в пиксель; поля, которые не должны меняться, — байт в
 байт как в шаблоне.
 
@@ -125,6 +144,10 @@ gerber2msla board F_Cu.gbr --drill PTH.drl --outline Edge_Cuts.gbr --template T.
 | превью | уменьшенная маска в файле принтера; для глаз, не для геометрии |
 | RLE | кодирование слоя `pw0Img`: «серость + длина серии» (план П1) |
 | клетка | один тест; «28 клеток» — строки таблицы перенесённых тестов, считая параметры `parametrize` |
+| `[output]` | таблица конфига: файл принтера, необязательный ЗАМЕР пикселя и выходы — у пластины `px6s`/`png`, у платы `dir` + `png` |
+| сторона | `[[side]]` платы: имя-файл, медь, зеркало, тент или отверстия, время засветки и необязательный `align_s` |
+| файл совмещения | `<name>_align.px6s`: та же медь, ВСЕГДА с отверстиями и со своим временем — по нему совмещают стороны |
+| тент | `holes = false`: рабочая маска без вычтенных отверстий (паяльная маска закрывает их) |
 
 ## 2.4. Где лежат данные
 

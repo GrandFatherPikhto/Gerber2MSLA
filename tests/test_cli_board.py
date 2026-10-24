@@ -1,4 +1,4 @@
-"""The `board` command (plan Г2, rules of 24.10 about the screen and the pixel).
+"""The `board` command (plan Г2, rules of 24.10 about the screen and the pixel; plan Б2).
 
 Cells closed here — the table of what the command line decides:
 
@@ -11,10 +11,21 @@ Cells closed here — the table of what the command line decides:
     отказы                больше экрана; не Gerber; не Excellon; `.px6s` без шаблона и без времени;
                           без шаблона и без экрана/пикселя; неизвестное расширение
 
+План Б2 (`board --config`) — таблица решений конфига:
+
+    выход                 `[output] dir` (а не `-o`), `png = true|false`; перезапись — `overwrote`
+    рамка                 ОДНА строка на всю плату: контур общий, и вторая копия лишь разошлась бы
+    стороны               своя медь, своё зеркало; `bottom` — зеркальные столбцы `top`
+    отверстия             `holes = false` — тент; `_align` — ВСЕГДА с отверстиями и своим временем
+    картинка              .png и .px6s одного файла — из ОДНОГО `compose`
+    пути                  от файла конфига: другой текущий каталог ничего не сдвигает
+    отказы                двенадцать флагов рядом с `--config` — по имени; без меди; без `-o`
+
 Empty cells and why: no cell for `--at`, `--mirror`, `--invert` and `--marker` — they are
 `masks`' own flags, their cells are in `test_masks.py`, and this command hands the figure to
 the same `compose`; no cell for an unreadable template — `tests/test_cli_px6s.py` covers the
-reader's refusals.
+reader's refusals. The config's own refusals (unknown key, bad type, `align_s` without
+`drills`) are in `tests/test_board_config.py`.
 
 The template `tests/data/01_test02.px6s` is the real one-layer file of this printer (5760 x
 3600 px, pixel 34.00 um) and is read only: the screen and the header pixel are ITS numbers.
@@ -79,15 +90,22 @@ def template() -> Path:
 
 @pytest.fixture
 def board_files(tmp_path) -> dict[str, Path]:
-    """A 2 x 1 mm board: copper pad, its outline and one 0.6 mm hole in the middle."""
+    """A 2 x 1 mm board: copper pad, its outline and one 0.6 mm hole in the middle.
+
+    `copper_b` is the RIGHT HALF of the same board: two sides of one config must give two
+    different pictures, or a second side could quietly reuse the first one's copper.
+    """
     copper = tmp_path / "F_Cu.gbr"
     copper.write_text(_layer("%ADD10R,2.0X1.0*%\n%LPD*%\nG01*\nD10*\n"
                              f"X{_coord(1.0)}Y{_coord(0.5)}D03*\n"))
+    copper_b = tmp_path / "B_Cu.gbr"
+    copper_b.write_text(_layer(_region([(1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0)])))
     outline = tmp_path / "Edge_Cuts.gbr"
     outline.write_text(_layer(_region([(0.0, 0.0), (2.0, 0.0), (2.0, 1.0), (0.0, 1.0)])))
     drill = tmp_path / "PTH.drl"
     drill.write_text(EXCELLON)
-    return {"copper": copper, "outline": outline, "drill": drill, "dir": tmp_path}
+    return {"copper": copper, "copper_b": copper_b, "outline": outline, "drill": drill,
+            "dir": tmp_path}
 
 
 def _run(capsys, *args: str) -> str:
@@ -308,3 +326,219 @@ def test_a_printer_file_needs_its_template_and_its_time(capsys, template, board_
         args.append(str(template) if item == "{template}" else item)
     error = _refused(capsys, *args, "-o", str(board_files["dir"] / "top.px6s"))
     assert match in error
+
+
+# ─────────────────────────── a board from a config ─────────────────────────
+#
+# The config lives in `tmp_path/cfg`, its own paths are relative to ITSELF
+# ("../F_Cu.gbr", "../made"), and the template is given by absolute path: a cell that
+# changes the working directory then proves which of the two a path counts from.
+
+def _side(name: str, copper: str, *, mirror: bool = False, holes: bool = False,
+          exposure: float = 25, align: float | None = None) -> str:
+    """One `[[side]]` block, written the way an operator writes it."""
+    lines = ["[[side]]", f'name = "{name}"', f'copper = "{copper}"',
+             f"mirror = {'true' if mirror else 'false'}",
+             f"holes = {'true' if holes else 'false'}",
+             f"exposure_s = {exposure:g}"]
+    if align is not None:
+        lines.append(f"align_s = {align:g}")
+    return "\n".join(lines) + "\n"
+
+
+def _toml(where: Path, template: Path, *sides: str, png: bool = False,
+          pixel_um: str | None = None, name: str = "board.toml") -> Path:
+    """A board config in `where/cfg`: the frame and the drills are the fixture's."""
+    parts = [
+        "[output]",
+        f'template = "{template}"',
+        'dir = "../made"',
+        f"png = {'true' if png else 'false'}",
+    ]
+    if pixel_um is not None:
+        parts.append(f"pixel_um = {pixel_um}")
+    parts += ["", "[board]", 'outline = "../Edge_Cuts.gbr"', 'drills = ["../PTH.drl"]', ""]
+    parts.append("\n".join(sides))
+    folder = where / "cfg"
+    folder.mkdir(exist_ok=True)
+    path = folder / name
+    path.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    return path
+
+
+def _file_pixels(path: Path) -> np.ndarray:
+    """The picture the printer will light: the layer of the file itself."""
+    return read_file(path).layer_image(0)
+
+
+def _white_box(pixels: np.ndarray) -> tuple[int, int, int, int]:
+    """The box of the white: left and upper INCLUSIVE, right and lower EXCLUSIVE."""
+    rows, cols = np.nonzero(pixels)
+    return int(cols.min()), int(rows.min()), int(cols.max()) + 1, int(rows.max()) + 1
+
+
+def test_a_config_writes_the_folder_and_the_report(capsys, template, board_files):
+    """The folder comes from `[output] dir` — it need not exist — and keeps the report."""
+    config = _toml(board_files["dir"], template, _side("top", "../F_Cu.gbr", align=1))
+    out = _run(capsys, "board", "--config", str(config))
+
+    made = board_files["dir"] / "made"
+    assert (made / "top.px6s").is_file()
+    assert (made / "top_align.px6s").is_file()
+    assert "Wrote" in out and "px layer" in out
+    assert read_file(made / "top.px6s").header.exposure_s == pytest.approx(25.0)
+    assert read_file(made / "top_align.px6s").header.exposure_s == pytest.approx(1.0)
+
+    report = (made / "board_report.txt").read_text(encoding="utf-8")
+    assert "config, whole, as read from" in report
+    for line in config.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            assert line in report, f"the report lost the config's own line {line!r}"
+
+
+def test_one_frame_is_printed_for_the_whole_board(capsys, template, board_files):
+    """Two sides, one outline: the frame is stated once, and a side without `align_s` says so."""
+    config = _toml(board_files["dir"], template,
+                   _side("top", "../F_Cu.gbr"), _side("bottom", "../B_Cu.gbr"))
+    out = _run(capsys, "board", "--config", str(config))
+    assert out.count("frame: ") == 1, f"the frame is one line for the whole board: {out}"
+    assert "side top:" in out and "side bottom:" in out
+    assert "align: none — the side has no 'align_s'" in out
+
+
+def test_each_side_takes_its_own_copper(capsys, template, board_files):
+    """`B_Cu` is the right half of the board: the second side must not reuse the first's."""
+    config = _toml(board_files["dir"], template,
+                   _side("top", "../F_Cu.gbr"), _side("bottom", "../B_Cu.gbr"))
+    _run(capsys, "board", "--config", str(config))
+    made = board_files["dir"] / "made"
+    top, bottom = _file_pixels(made / "top.px6s"), _file_pixels(made / "bottom.px6s")
+    assert _white_box(bottom)[0] > _white_box(top)[0], "the bottom is its own copper"
+    assert np.count_nonzero(bottom) < np.count_nonzero(top)
+
+
+def test_a_side_is_mirrored_and_the_other_is_not(capsys, template, board_files):
+    """The mirror is the side's own: one file keeps its columns, the other is reflected."""
+    config = _toml(board_files["dir"], template,
+                   _side("top", "../F_Cu.gbr"),
+                   _side("bottom", "../F_Cu.gbr", mirror=True))
+    out = _run(capsys, "board", "--config", str(config))
+    made = board_files["dir"] / "made"
+    top, bottom = _file_pixels(made / "top.px6s"), _file_pixels(made / "bottom.px6s")
+    left, _, right, _ = _white_box(top)
+    mirror_left, _, mirror_right, _ = _white_box(bottom)
+    width = top.shape[1]
+    assert (mirror_left, mirror_right) == (width - right, width - left)
+    assert "side bottom: F_Cu.gbr, mirror on" in out
+    assert "side top: F_Cu.gbr, mirror off" in out
+
+
+def test_the_align_file_always_has_the_holes_and_its_own_time(capsys, template, board_files):
+    """`holes = false` keeps a tenting working mask; the alignment file has the holes anyway."""
+    config = _toml(board_files["dir"], template, _side("top", "../F_Cu.gbr", align=1))
+    out = _run(capsys, "board", "--config", str(config))
+    made = board_files["dir"] / "made"
+    tent, align = _file_pixels(made / "top.px6s"), _file_pixels(made / "top_align.px6s")
+    assert np.count_nonzero(tent) > np.count_nonzero(align)
+    assert np.array_equal(np.maximum(tent, align), tent), "the align file invents no white"
+    assert _white_box(tent) == _white_box(align), "the frame did not move for the holes"
+    assert read_file(made / "top_align.px6s").header.exposure_s == pytest.approx(1.0)
+    assert "holes ALWAYS subtracted" in out
+
+
+def test_holes_true_pours_the_holes_in_the_working_file(capsys, template, board_files):
+    """`holes = true` subtracts the drills in the exposure file too — and only subtracts."""
+    config = _toml(board_files["dir"], template,
+                   _side("tent", "../F_Cu.gbr"), _side("pour", "../F_Cu.gbr", holes=True))
+    _run(capsys, "board", "--config", str(config))
+    made = board_files["dir"] / "made"
+    tent, pour = _file_pixels(made / "tent.px6s"), _file_pixels(made / "pour.px6s")
+    assert np.count_nonzero(pour) < np.count_nonzero(tent)
+    assert not ((pour > 0) & (tent == 0)).any(), "pouring removes white, it never adds any"
+
+
+def test_png_pairs_come_from_the_same_picture(capsys, template, board_files):
+    """`png = true` adds a PNG of the very layer: one compose, two files, no third drawing."""
+    config = _toml(board_files["dir"], template, _side("top", "../F_Cu.gbr", align=1),
+                   png=True)
+    _run(capsys, "board", "--config", str(config))
+    made = board_files["dir"] / "made"
+    for stem in ("top", "top_align"):
+        assert np.array_equal(_pixels(made / f"{stem}.png"), _file_pixels(made / f"{stem}.px6s")), \
+            f"{stem}.png and {stem}.px6s are one picture"
+
+
+def test_the_paths_count_from_the_config_file(capsys, template, board_files, monkeypatch):
+    """A different working directory must not move a single file of the board.
+
+    The working directory is TWO levels below the board, so a path counted from it cannot
+    accidentally land where the config meant: `../made` would be another folder, and the
+    cell says which one is right.
+    """
+    config = _toml(board_files["dir"], template, _side("top", "../F_Cu.gbr"))
+    elsewhere = board_files["dir"] / "run" / "deep"
+    elsewhere.mkdir(parents=True)
+    monkeypatch.chdir(elsewhere)
+    _run(capsys, "board", "--config", str(config))
+    assert (board_files["dir"] / "made" / "top.px6s").is_file()
+    assert not (board_files["dir"] / "run" / "made").exists()
+    assert not (elsewhere / "top.px6s").exists()
+
+
+def test_a_second_run_says_overwrote(capsys, template, board_files):
+    """No overwrite protection (plan Б0): the file is made again and the report says so."""
+    config = _toml(board_files["dir"], template, _side("top", "../F_Cu.gbr"))
+    _run(capsys, "board", "--config", str(config))
+    out = _run(capsys, "board", "--config", str(config))
+    assert "overwrote" in out and "Wrote" not in out
+
+
+def test_pixel_um_in_the_output_changes_the_geometry_only(capsys, template, board_files):
+    """The board's `[output]` is the plate's: a measured pixel, a header left byte for byte."""
+    config = _toml(board_files["dir"], template, _side("top", "../F_Cu.gbr"))
+    out = _run(capsys, "board", "--config", str(config))
+    assert "= 59 x 29 px" in out
+    made = board_files["dir"] / "made"
+    plain_blocks = _blocks(made / "top.px6s")
+
+    config = _toml(board_files["dir"], template, _side("top", "../F_Cu.gbr"),
+                   pixel_um="[34.0, 30.0]")
+    out = _run(capsys, "board", "--config", str(config))
+    assert "= 59 x 33 px" in out
+    assert read_file(made / "top.px6s").header.pixel_size_um == pytest.approx(34.0)
+    measured_blocks = _blocks(made / "top.px6s")
+    for name in ("header", "machine", "software", "extra"):
+        assert plain_blocks[name] == measured_blocks[name], f"the {name} block moved"
+    assert plain_blocks["layer_image"] != measured_blocks["layer_image"]
+
+
+@pytest.mark.parametrize("extra, name", [
+    (["../F_Cu.gbr"], "the copper argument"),
+    (["-o", "x.px6s"], "-o/--output"),
+    (["--drill", "PTH.drl"], "--drill"),
+    (["--outline", "Edge_Cuts.gbr"], "--outline"),
+    (["--template", "t.px6s"], "--template"),
+    (["--screen-px", "5760x3600"], "--screen-px"),
+    (["--pixel-um", "34x34"], "--pixel-um"),
+    (["--exposure-s", "25"], "--exposure-s"),
+    (["--at", "0,0"], "--at"),
+    (["--mirror"], "--mirror"),
+    (["--invert"], "--invert"),
+    (["--marker"], "--marker"),
+], ids=["copper", "-o", "--drill", "--outline", "--template", "--screen-px", "--pixel-um",
+        "--exposure-s", "--at", "--mirror", "--invert", "--marker"])
+def test_a_flag_next_to_the_config_is_refused_by_name(capsys, template, board_files,
+                                                      extra, name):
+    """Twelve ways to say one thing twice: every one is a refusal that names itself."""
+    config = _toml(board_files["dir"], template, _side("top", "../F_Cu.gbr"))
+    error = _refused(capsys, "board", "--config", str(config), *extra)
+    assert name in error
+    assert "--config" in error
+
+
+def test_without_a_config_the_copper_and_the_output_stay_mandatory(capsys, board_files):
+    """The two positional facts are checked by name, each with its own one line."""
+    error = _refused(capsys, "board", "-o", str(board_files["dir"] / "top.png"))
+    assert "the copper layer is mandatory" in error
+    error = _refused(capsys, "board", str(board_files["copper"]))
+    assert "an output path is mandatory" in error
