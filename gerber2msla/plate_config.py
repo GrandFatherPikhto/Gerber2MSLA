@@ -52,12 +52,12 @@ Standard library only: ``tomllib`` is 3.11+, and the project's floor is 3.11.
 from __future__ import annotations
 
 import math
-import re
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
+from .config_strict import (_keys, _loads, _number, _pair, _read_text, _required,
+                            _string, _table, _what, _whole)
 from .masks import Refusal
 from .patterns import DIRECTIONS, Width
 
@@ -165,98 +165,11 @@ class PlateConfig:
 
 # ───────────────────────────── refusal wording ─────────────────────────────
 
-def _what(value: object) -> str:
-    """What was found, in the operator's terms: a table, an array, the number 6.0..."""
-    if isinstance(value, bool):
-        return f"a boolean ({value!r})"
-    if isinstance(value, (int, float)):
-        return f"the number {value!r}"
-    if isinstance(value, str):
-        return f"a string ({value!r})"
-    if isinstance(value, list):
-        return f"an array of {len(value)} item(s)"
-    if isinstance(value, dict):
-        return "a table"
-    return type(value).__name__
-
-
-def _noun(count: int) -> str:
-    return "key" if count == 1 else "keys"
-
-
-def _table(value: object, where: str, source: str) -> dict:
-    if type(value) is not dict:
-        raise Refusal(f"{source}: {where} must be a table, got {_what(value)}")
-    return value
-
-
-def _keys(table: dict, allowed: tuple[str, ...], where: str, source: str) -> None:
-    """Strictness, first half: a key that does not belong here is refused BY NAME."""
-    unknown = sorted(set(table) - set(allowed))
-    if unknown:
-        listed = ", ".join(f"'{key}'" for key in unknown)
-        raise Refusal(f"{source}: {where}: unknown {_noun(len(unknown))} {listed}; "
-                      f"the known keys are {', '.join(allowed)}")
-
-
-def _required(table: dict, key: str, where: str, source: str):
-    """Strictness, second half: no key means no value — there are no defaults here."""
-    if key not in table:
-        raise Refusal(f"{source}: {where}: no '{key}': this config has no defaults, "
-                      f"every key a figure needs must be in the file")
-    return table[key]
-
-
-def _number(value: object, key: str, where: str, source: str, *,
-            positive: bool = True) -> float:
-    """A millimetre-like number; ``int`` is fine (``width_mm = 70``), ``bool`` is not.
-
-    ``True`` is an ``int`` in Python, so the type is compared by identity: a
-    ``height_mm = true`` from the file is a refusal and never a plate 1 mm high.
-    """
-    if type(value) not in (int, float):
-        raise Refusal(f"{source}: {where}: '{key}' must be a number, got {_what(value)}")
-    number = float(value)
-    if not math.isfinite(number):
-        raise Refusal(f"{source}: {where}: '{key}' must be finite, got {value!r}")
-    if positive and number <= 0.0:
-        raise Refusal(f"{source}: {where}: '{key}' must be positive, got {value!r}")
-    if not positive and number < 0.0:
-        raise Refusal(f"{source}: {where}: '{key}' must not be negative, got {value!r}")
-    return number
-
-
-def _whole(value: object, key: str, where: str, source: str, *, minimum: int = 1) -> int:
-    """A whole pixel count: ``6`` yes, ``6.0`` no — a count of pixels has no fraction."""
-    if type(value) is not int:
-        raise Refusal(f"{source}: {where}: '{key}' must be a whole number of pixels, "
-                      f"got {_what(value)}")
-    if value < minimum:
-        raise Refusal(f"{source}: {where}: '{key}' must be at least {minimum}, got {value}")
-    return value
-
-
-def _pair(value: object, key: str, where: str, source: str, *,
-          positive: bool = True) -> tuple[float, float]:
-    """Two numbers: ``at_mm`` and ``size_mm``. Three is as wrong as one."""
-    if type(value) is not list:
-        raise Refusal(f"{source}: {where}: '{key}' must be an array of two numbers, "
-                      f"got {_what(value)}")
-    if len(value) != 2:
-        raise Refusal(f"{source}: {where}: '{key}' must hold exactly two numbers, "
-                      f"got {len(value)}")
-    return (_number(value[0], f"{key}[0]", where, source, positive=positive),
-            _number(value[1], f"{key}[1]", where, source, positive=positive))
-
-
-def _string(value: object, key: str, where: str, source: str,
-            choices: tuple[str, ...]) -> str:
-    if type(value) is not str:
-        raise Refusal(f"{source}: {where}: '{key}' must be a string, got {_what(value)}")
-    if value not in choices:
-        raise Refusal(f"{source}: {where}: '{key}' must be one of "
-                      f"{', '.join(repr(choice) for choice in choices)}, got {value!r}")
-    return value
+# The strict helpers (`_what`, `_table`, `_keys`, `_required`, `_number`, `_whole`,
+# `_pair`, `_string`, `_loads`, `_read_text`) live in `config_strict.py`: the board
+# config of plan Б1 asks the same questions, and a second copy of "an unknown key is a
+# refusal" is where the two configs would start to disagree. What stays here is what is
+# about WIDTHS and about this file's own keys.
 
 
 def _one_of(table: dict, keys: tuple[str, ...], where: str, source: str,
@@ -385,32 +298,10 @@ def _figure(table: object, index: int, source: str) -> FigureSpec:
 
 # ──────────────────────────────── reading ──────────────────────────────────
 
-def _syntax_line(exc: tomllib.TOMLDecodeError) -> int:
-    """The line the TOML parser stopped on: an attribute on 3.14, the text before it.
-
-    Both paths are kept on purpose: the attribute is the honest one, the regex is what
-    the older minor versions have, and the project's floor is 3.11 — a refusal with the
-    line number must not depend on which machine's Python read the file.
-    """
-    line = getattr(exc, "lineno", None)
-    if isinstance(line, int) and line > 0:
-        return line
-    found = re.search(r"line (\d+)", str(exc))
-    return int(found.group(1)) if found else 0
-
-
 def parse_plate_config(text: str, *, source: str = "<config>",
                        path: Path | None = None) -> PlateConfig:
     """Read the config text into specs; every refusal is one line that names the place."""
-    try:
-        data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        message = getattr(exc, "msg", None) or str(exc)
-        line = _syntax_line(exc)
-        where = f"line {line}" if line else "a TOML syntax error"
-        raise Refusal(f"{source}: {where}: {message}") from None
-
-    data = _table(data, "the whole file", source)
+    data = _loads(text, source)
     _keys(data, ROOT_KEYS, "the top level", source)
 
     plate = _table(_required(data, "plate", "the top level", source), "the [plate] table",
@@ -448,12 +339,7 @@ def parse_plate_config(text: str, *, source: str = "<config>",
 def load_plate_config(path: str | Path) -> PlateConfig:
     """Read the file as UTF-8 and parse it; a missing file is a refusal, not a trace."""
     target = Path(path)
-    try:
-        text = target.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise Refusal(f"cannot read the plate config {target}: {exc}") from None
-    except UnicodeDecodeError as exc:
-        raise Refusal(f"the plate config {target} is not UTF-8: {exc}") from None
+    text = _read_text(target, "the plate config")
     return parse_plate_config(text, source=str(target), path=target)
 
 
