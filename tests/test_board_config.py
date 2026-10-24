@@ -36,8 +36,12 @@ from gerber2msla.board_config import load_board_config, parse_board_config
 from gerber2msla.masks import Refusal
 
 BASE = """
-[board]
+[output]
 template = "t.px6s"
+dir = "out"
+png = false
+
+[board]
 outline = "edge.gbr"
 drills = ["pth.drl"]
 
@@ -84,10 +88,12 @@ def _with_line(text: str, prefix: str, replacement: str) -> str:
 def test_a_board_config_is_read_into_sides():
     """Two sides, each with its own mirror, holes and time; the align file is derived."""
     config = _read(BASE)
-    assert config.template == Path("t.px6s")
+    assert config.output.template == Path("t.px6s")
+    assert config.output.dir == Path("out")
+    assert config.output.png is False, "a required boolean, not a default"
     assert config.outline == Path("edge.gbr")
     assert config.drills == (Path("pth.drl"),)
-    assert config.pixel_um is None, "no [board] pixel_um: the template header decides"
+    assert config.pixel_um is None, "no [output] pixel_um: the template header decides"
     assert [side.name for side in config.sides] == ["top", "bottom"]
     top, bottom = config.sides
     assert (top.mirror, top.holes, top.exposure_s, top.align_s) == (False, False, 25.0, None)
@@ -122,7 +128,7 @@ def test_paths_count_from_the_config_directory_not_the_working_directory(tmp_pat
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
     config = load_board_config(config_file)
-    assert config.template == gerber / "t.px6s"
+    assert config.output.template == gerber / "t.px6s"
     assert config.sides[0].copper == gerber / "f_cu.gbr", \
         "the copper of the FIRST side, resolved against the config's directory"
 
@@ -135,7 +141,9 @@ def test_an_absolute_path_is_taken_as_it_is(tmp_path):
 
 UNKNOWN_KEY_CELLS = [
     ("board", BASE.replace('outline = "edge.gbr"', 'outline = "edge.gbr"\npixel = [1, 1]'),
-     "'pixel'", "drills, outline, pixel_um, template"),
+     "'pixel'", "the known keys are drills, outline"),
+    ("output", BASE.replace('dir = "out"', 'dir = "out"\nfolder = "x"'),
+     "'folder'", "the known keys are dir, pixel_um, png, template"),
     ("side", _with_line(BASE, "holes", "holes = false\nalign = 1"),
      "'align'", "the known keys are align_s, copper, exposure_s, holes, mirror, name"),
 ]
@@ -152,6 +160,8 @@ def test_an_unknown_key_is_refused_with_its_name(level, text, named, known):
 
 MISSING_KEY_CELLS = [
     ("template", _with_line(BASE, "template", "")),
+    ("dir", _with_line(BASE, "dir", "")),
+    ("png", _with_line(BASE, "png", "")),
     ("outline", _with_line(BASE, "outline", "")),
     ("drills", _with_line(BASE, "drills", "")),
     ("name", _with_line(BASE, "name", "")),
@@ -180,8 +190,9 @@ TYPE_CELLS = [
      "must be a number"),
     ("drills is a string", 'drills = ["pth.drl"]', 'drills = "pth.drl"', "drills",
      "must be an array of paths"),
-    ("pixel_um is not a pair", 'drills = ["pth.drl"]',
-     'drills = ["pth.drl"]\npixel_um = [34]', "pixel_um", "exactly two numbers"),
+    ("png is not a boolean", "png = false", 'png = "yes"', "png", "must be true or false"),
+    ("pixel_um is not a pair", "png = false", "png = false\npixel_um = [34]", "pixel_um",
+     "exactly two numbers"),
     ("name is a number", 'name = "top"', "name = 5", "name", "must be a string"),
 ]
 
@@ -230,8 +241,12 @@ def test_holes_without_drills_is_refused():
 
 
 TENTED = """
-[board]
+[output]
 template = "t.px6s"
+dir = "out"
+png = true
+
+[board]
 outline = "edge.gbr"
 drills = []
 
