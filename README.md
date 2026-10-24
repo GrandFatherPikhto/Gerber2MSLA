@@ -101,6 +101,7 @@ png = "../out/plate_70x80_25s.png"          # optional; at least one of px6s / p
 width_mm = 70
 height_mm = 78
 exposure_s = 25                  # for a .px6s; both times come from here
+# rotate = 90                    # optional: turn the finished plate counter-clockwise
 
 [marker]                         # optional: no [marker] means no letter F
 at_mm = [3.196, 3.196]
@@ -122,7 +123,7 @@ gap = "same"                     # gap = the stripe width; or gap_mm / gap_px
 [[figure]]
 kind = "text"                    # a label in the plate's own 5 x 7 font
 at_mm = [29, 60]
-text = "25s"
+text = "{exposure_s}s"           # the ONE substitution: the plate's own time (20, 7, 2.5)
 stroke_px = 6                    # one font dot = 6 x 6 SCREEN pixels
 ```
 
@@ -157,6 +158,17 @@ stroke_px = 6                    # one font dot = 6 x 6 SCREEN pixels
   PIXELS, so a non-square pixel does not lean the letters. The set is `0-9`, `A-Z`,
   `a-z`, space and `. , - _ : / ( ) + = %`; anything else (Cyrillic, for one) is a
   refusal that names the character and its place in the line.
+* **`{exposure_s}` is the ONE substitution a label may hold**, and it is filled with
+  `[plate] exposure_s` as written — `20`, `7`, `2.5`, no trailing zeros. A copied config
+  with another time therefore draws another label (25.10: the operator changed the time to
+  7 s and the plate kept saying "25s"). Any other brace — a wrong name, a second
+  substitution, an unpaired brace — is refused with the character number in `text`.
+* **`[plate] rotate = 0 | 90 | 180 | 270`** turns the FINISHED plate — every figure and the
+  marker, so the F lies on its side — counter-clockwise, and centres the turned plate
+  again: 70 x 80 mm at 90 degrees is 2353 x 2059 px at 1703, 770 px. A quarter turn on a
+  non-square pixel is refused: the axes would swap their meaning.
+  `examples/plate_70x80_20s_rot90.toml` reproduces `out/plate_70x80_20s_rot90.px6s`, the
+  file that was turned by hand, BYTE FOR BYTE.
 * **The config travels with the mask.** The whole file, byte for byte, goes into the PNG
   chunk `plate_config` (iTXt, UTF-8 — your comments are yours, and Russian is fine); the
   report prints it too. The report chunk `msla_tests` is unchanged.

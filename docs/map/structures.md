@@ -233,6 +233,7 @@ PlateConfig                     — прочитанный конфиг, ещё 
   figures: tuple[FigureSpec,…]  — в порядке ФАЙЛА
   output: PlateOutput           — [output] (Б0): принтер и выход
   text: str                     — файл целиком, как прочитан (уезжает в кусок PNG)
+  rotate: int = 0               — поворот готовой пластины против часовой (0/90/180/270)
   path: Path | None             — для сообщений; None у текста из памяти
   label                         — «<config>» или путь
 
@@ -263,17 +264,40 @@ parse_plate_config(text, *, source=…, base=None, path=None) -> PlateConfig
 load_plate_config(path) — read_text UTF-8 -> parse -> _must_exist(шаблон); нет файла или
                           не UTF-8 — Refusal одной строкой
 
+_rotation             — [plate] rotate: 0/90/180/270, нет ключа — 0; иное — отказ
+_placeholders         — в text одна подстановка {exposure_s}; иная скобка — отказ с
+                        НОМЕРОМ СИМВОЛА
+fill_text(text, exposure_s) — подстановка времени без хвоста нулей (20, 7, 2.5); нет
+                        exposure_s — отказ с именем ключа
+
 build_config_plate(screen, config) -> (placements, report)
-  пластина: _quantised по каждой оси, origin_pixels(…, None) = ЦЕНТР экрана
+  пластина: _quantised по каждой оси; фигуры кладутся на ХОЛСТ РАЗМЕРОМ ПЛАСТИНЫ
   _require_on_plate     — пластина больше экрана и фигура за пластиной — отказ с именем
   _corner_px            — at_mm / pitch по СВОЕЙ оси, round; ноль законен
-  _figure_of            — та же build_* , что у одиночной команды
-  Placement(at_mm=None) — поэтому compose печатает мм ЭКРАНА, а мм пластины — в отчёте здесь
+  _figure_of            — та же build_*, что у одиночной команды; надпись получает
+                          fill_text(spec.text, config.exposure_s)
+  compose(холст, …)     — холст собирается ОДНИМ compose: пересечения — его отказы
+  np.rot90(…)           — rotate != 0: ГОТОВАЯ картинка поворачивается ПРОТИВ часовой;
+                          четверть оборота на неквадратном пикселе — отказ
+  place_figure(…, None) — повёрнутая пластина ставится по центру, и compose кладёт её на
+                          экран ОДНОЙ фигурой «plate» (зеркало и полярность — тот же путь)
 ```
 
 Кусок PNG: `masks.write_mask(..., config_text=…)` кладёт текст конфига в iTXt под ключом
 `plate_config`; кусок отчёта `msla_tests` при этом не меняется — на этом стоит оракул К2
 («пример = зашитая раскладка» сравнивается по пикселям).
+
+## Сторож мусора оснасток — `tools/repo_guard.py` (правило 25.10)
+
+```
+changed(root=ROOT) -> set[str]        — пути из `git status --porcelain`
+leaked(before, root=ROOT) -> set[str] — что ПОЯВИЛОСЬ с `before`: бывшее до прогона — не мусор
+```
+
+Грязное дерево на старте — норма (там может лежать работа Дениса): оснастка запоминает
+`before` и судит только о новом. LEAK — промах со списком путей; сторож НИЧЕГО не удаляет
+(функции удаления у него нет), мусор убирает тот, кто смотрит. Клетки —
+`tests/test_repo_guard.py`: чужой неотслеживаемый файл на месте и не изменён.
 
 ## Строгие помощники — `gerber2msla/config_strict.py` (Б1, переезд из `plate_config.py`)
 

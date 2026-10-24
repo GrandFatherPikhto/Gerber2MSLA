@@ -35,9 +35,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from gerber2msla.masks import Refusal, Screen, compose
+from gerber2msla.masks import Refusal, Screen, marker_pixels
 from gerber2msla.patterns import Width
 from gerber2msla.plate_config import load_plate_config, parse_plate_config
 from gerber2msla.plate_layout import build_config_plate
@@ -157,7 +158,7 @@ UNKNOWN_KEY_CELLS = [
     ("output", _with_line(BASE, "px6s", 'px6s = "plate.px6s"\npixels = [1, 1]'),
      "'pixels'", "the known keys are pixel_um, png, px6s, template"),
     ("plate", _with_line(BASE, "height_mm", "height_mm = 16\nwidht_mm = 8"),
-     "'widht_mm'", "exposure_s, height_mm, width_mm"),
+     "'widht_mm'", "exposure_s, height_mm, rotate, width_mm"),
     ("marker", BASE.replace("[[figure]]", "[marker]\nat_mm = [1, 1]\nwidth_mm = 2\n\n"
                                           "[[figure]]"),
      "'width_mm'", "the known keys are at_mm"),
@@ -420,22 +421,36 @@ SQUAT = Screen(width_px=200, height_px=200, pixel_x_um=100.0, pixel_y_um=50.0)
 a swapped number and not as rounding noise."""
 
 
+def _white_box(pixels: np.ndarray) -> tuple[int, int, int, int]:
+    """The box of the white in a FIGURE's own pixels: left and upper IN, right and lower OUT."""
+    rows, columns = np.nonzero(pixels)
+    return (int(columns.min()), int(rows.min()),
+            int(columns.max()) + 1, int(rows.max()) + 1)
+
+
 def test_a_corner_on_a_non_square_pixel_uses_its_own_axis():
-    """`at_mm` is X then Y: on a 100 x 50 um pixel the two counts differ by a factor 2."""
+    """`at_mm` is X then Y: on a 100 x 50 um pixel the two counts differ by a factor 2.
+
+    Checked on the PIXELS of the plate (the plate is one figure since the turn of 25.10),
+    so a swapped axis cannot hide behind a report line: 1 mm across is 10 px and 2 mm down
+    is 40 px, and the white of a 5 x 2 mm contour starts exactly there.
+    """
     text = _with_line(_with_line(BASE, "width_mm", "width_mm = 10"), "height_mm",
                       "height_mm = 5")
     text = _with_line(text, "size_mm", "size_mm = [5, 2]")
     text = _with_line(text, "at_mm", "at_mm = [1, 2]")
     placements, _ = build_config_plate(SQUAT, _read(text))
-    assert [(placement.x_px, placement.y_px) for placement in placements] == [(60, 90)], \
-        "the plate at 50, 50 px plus 1 mm across (10 px) and 2 mm down (40 px)"
+    picture = placements[0].figure.pixels
+    assert picture.shape == (100, 100), "the plate 10 x 5 mm at 100 x 50 um = 100 x 100 px"
+    assert _white_box(picture) == (10, 40, 60, 80), \
+        "the contour starts 1 mm across (10 px) and 2 mm down (40 px) inside the plate"
 
 
 def test_the_plate_is_centred_and_a_corner_counts_from_it():
     """`at_mm` counts from the PLATE's corner; the plate itself sits in the middle."""
     placements, report = build_config_plate(SCREEN, _read(BASE))
     assert [(placement.name, placement.x_px, placement.y_px) for placement in placements] \
-        == [("square #1", 30, 30)], "the plate starts at 20, 20 px and the figure at 1 mm"
+        == [("plate", 20, 20)], "ONE picture, centred: the plate starts at 20, 20 px"
     text = "\n".join(report)
     assert "centred on the 200 x 200 px screen at 20, 20 px" in text
     assert ("at 1.000, 1.000 mm from the plate's top-left corner (10, 10 px inside it)"
@@ -443,6 +458,8 @@ def test_the_plate_is_centred_and_a_corner_counts_from_it():
     assert "figure square #1:" in text, "the table row of the figure"
     assert "  pattern: square, side 10.000 x 10.000 mm" in text, \
         "the figure's own report travels with the plate"
+    assert _white_box(placements[0].figure.pixels) == (10, 10, 110, 110), \
+        "and the pixels agree with the line: the contour lies 1 mm inside the plate"
 
 
 def test_a_plate_larger_than_the_screen_is_refused():
@@ -466,12 +483,16 @@ def test_a_figure_that_does_not_fit_the_plate_is_refused_with_its_name():
 
 
 def test_two_figures_on_one_pixel_are_refused_with_both_names():
-    """The overlap is `compose`'s refusal — the single placement path — and names BOTH."""
+    """The overlap is `compose`'s refusal — the single placement path — and names BOTH.
+
+    Since the plate is composed BEFORE it is placed (the turn of 25.10 needs the finished
+    picture), the refusal comes out of `build_config_plate`; the property is the same one,
+    and the names are the figures' own.
+    """
     text = BASE + ('\n[[figure]]\nkind = "square"\nat_mm = [1, 1]\n'
                    'size_mm = [10, 10]\nline_mm = 0.2\n')
-    placements, _ = build_config_plate(SCREEN, _read(text))
     with pytest.raises(Refusal) as caught:
-        compose(SCREEN, placements, mirror=False, invert=False)
+        build_config_plate(SCREEN, _read(text))
     message = str(caught.value)
     assert "figure square #1" in message and "figure square #2" in message
     assert "overlap" in message
@@ -480,19 +501,21 @@ def test_two_figures_on_one_pixel_are_refused_with_both_names():
 def test_no_marker_table_means_no_marker_and_the_report_says_so():
     """No silent F: the operator asked for a layout, and the layout has no marker."""
     placements, report = build_config_plate(SCREEN, _read(BASE))
-    assert [placement.name for placement in placements] == ["square #1"]
+    assert [placement.name for placement in placements] == ["plate"]
     assert ("no marker: the plate carries no orientation reference" in "\n".join(report))
 
 
 def test_the_marker_is_one_f_where_the_config_puts_it():
-    """One F per plate, at the corner the config names, inside the plate."""
-    text = BASE.replace("[[figure]]", "[marker]\nat_mm = [1, 1]\n\n[[figure]]")
+    """One F per plate, at the corner the config names, inside the plate — in the pixels."""
+    text = BASE.replace("[[figure]]", "[marker]\nat_mm = [2, 2]\n\n[[figure]]")
     placements, report = build_config_plate(SCREEN, _read(text))
-    assert [placement.name for placement in placements] == ["marker", "square #1"]
-    marker = placements[0]
-    assert (marker.x_px, marker.y_px) == (30, 30), "the plate corner plus 1 mm"
-    assert marker.figure.pixels.shape == (20, 20), "a 2 mm F at 100 um per pixel"
-    assert "ONE letter F at 1.000, 1.000 mm" in "\n".join(report)
+    assert [placement.name for placement in placements] == ["plate"]
+    picture = placements[0].figure.pixels
+    letter = marker_pixels(SCREEN)
+    assert letter.shape == (20, 20), "a 2 mm F at 100 um per pixel"
+    assert np.array_equal(picture[20:40, 20:40], letter), \
+        "the F sits 2 mm, 2 mm inside the plate, and the plate is a canvas of its own"
+    assert "ONE letter F at 2.000, 2.000 mm" in "\n".join(report)
 
 
 def test_the_exposure_time_is_read_and_named_in_the_report():
@@ -502,3 +525,71 @@ def test_the_exposure_time_is_read_and_named_in_the_report():
     assert config.exposure_s == 25.0
     _, report = build_config_plate(SCREEN, config)
     assert "exposure: 25 s from [plate] exposure_s" in "\n".join(report)
+
+
+# ──────────────────────── the label's substitution (25.10) ──────────────────
+
+@pytest.mark.parametrize("label, line, expected", [
+    ("another name in braces", 'text = "{expo}s"', "character 1 of 'text'"),
+    ("a stray brace after the good one", 'text = "{exposure_s}s}"',
+     "character 14 of 'text'"),
+    ("the substitution twice", 'text = "{exposure_s}{exposure_s}"', "twice"),
+], ids=["another name in braces", "a stray brace after the good one",
+        "the substitution twice"])
+def test_a_label_with_a_brace_that_is_not_the_one_substitution_is_refused(label, line,
+                                                                          expected):
+    """A brace is a promise: only `{exposure_s}` means anything, and the place is named."""
+    assert expected in _message(_with_line(TEXT, "text", line))
+
+
+# ──────────────────────────── the turn (25.10) ─────────────────────────────
+
+def test_a_quarter_turn_is_read():
+    """`[plate] rotate` is 0, 90, 180 or 270 degrees, counter-clockwise."""
+    text = _with_line(BASE, "height_mm", "height_mm = 16\nrotate = 90")
+    assert _read(text).rotate == 90
+    assert _read(BASE).rotate == 0, "no [plate] rotate: the plate lies as drawn"
+
+
+@pytest.mark.parametrize("line, expected", [
+    ("rotate = 45", "'rotate' must be 0, 90, 180 or 270"),
+    ("rotate = 90.0", "'rotate' must be 0, 90, 180 or 270"),
+    ("rotate = '90'", "'rotate' must be 0, 90, 180 or 270"),
+    ("rotate = -90", "'rotate' must be 0, 90, 180 or 270"),
+], ids=["a fifth angle", "a float", "a string", "a negative angle"])
+def test_a_turn_that_is_not_a_quarter_is_refused(line, expected):
+    assert expected in _message(_with_line(BASE, "height_mm", f"height_mm = 16\n{line}"))
+
+
+NON_SQUARE_PLATE = _with_line(_with_line(BASE, "width_mm", "width_mm = 10"),
+                              "size_mm", "size_mm = [5, 5]")
+"""10 x 16 mm at 100 um: 100 x 160 px, so the turn has sides to swap."""
+
+
+def test_the_turn_is_the_turned_plate_centred_again():
+    """A quarter COUNTER-clockwise, the sides swapped, and the turned plate centred."""
+    plain, _ = build_config_plate(SCREEN, _read(NON_SQUARE_PLATE))
+    turned, report = build_config_plate(
+        SCREEN, _read(_with_line(NON_SQUARE_PLATE, "height_mm",
+                                 "height_mm = 16\nrotate = 90")))
+    drawn = plain[0].figure.pixels
+    assert drawn.shape == (160, 100), "10 x 16 mm at 100 um = 100 x 160 px"
+    assert turned[0].figure.pixels.shape == (100, 160), "the turn swaps the sides"
+    assert np.array_equal(turned[0].figure.pixels, np.rot90(drawn)), \
+        "counter-clockwise: a clockwise turn is a different plate"
+    assert (turned[0].x_px, turned[0].y_px) == (20, 50), \
+        "centred again on the 200 x 200 px screen"
+    text = "\n".join(report)
+    assert "turned 90 degrees counter-clockwise to 160 x 100 px" in text
+    assert "centred on the 200 x 200 px screen at 20, 50 px" in text
+
+
+def test_a_quarter_turn_on_a_non_square_pixel_is_refused():
+    """A quarter turn would put every distance on the pitch of the other axis."""
+    text = _with_line(_with_line(BASE, "width_mm", "width_mm = 8"), "height_mm",
+                      "height_mm = 8\nrotate = 90")
+    text = _with_line(text, "size_mm", "size_mm = [4, 4]")
+    with pytest.raises(Refusal) as caught:
+        build_config_plate(SQUAT, _read(text))
+    assert "not square" in str(caught.value)
+    assert "quarter turn" in str(caught.value)

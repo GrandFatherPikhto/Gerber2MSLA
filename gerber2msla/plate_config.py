@@ -79,7 +79,21 @@ The refusal that names an unknown key reads this very table, so a new key cannot
 added to the reader and forgotten in the message, or the other way round.
 """
 
-PLATE_KEYS = ("exposure_s", "height_mm", "width_mm")
+PLATE_KEYS = ("exposure_s", "height_mm", "rotate", "width_mm")
+ROTATIONS = (0, 90, 180, 270)
+"""A quarter, half or three-quarter turn, COUNTER-clockwise about the plate's centre.
+
+Absent means 0 — "the plate lies as drawn" — and the report says so in words: the turn is
+a fact about the picture, and a plate that was not turned is not a plate that was.
+"""
+TEXT_PLACEHOLDER = "{exposure_s}"
+"""The ONE substitution a label may hold: the plate's own exposure time.
+
+Denis, 25.10: he copied a config, changed `[plate] exposure_s` to 7, and the label went on
+saying "25s" — the file said one thing and the plate another. Now the label can say
+`text = "{exposure_s}s"` and follows the time by construction; any other brace is a typo
+and is refused with its place.
+"""
 MARKER_KEYS = ("at_mm",)
 OUTPUT_KEYS = ("pixel_um", "png", "px6s", "template")
 ROOT_KEYS = ("figure", "marker", "output", "plate")
@@ -193,6 +207,8 @@ class PlateConfig:
     output: PlateOutput
     text: str
     """The file as it was read: it goes into the PNG chunk whole, UTF-8 (plan K2)."""
+    rotate: int = 0
+    """Counter-clockwise turn of the finished plate: 0, 90, 180 or 270 degrees."""
     path: Path | None = None
 
     @property
@@ -268,6 +284,57 @@ def _widths(table: dict, where: str, source: str) -> tuple[Width, ...]:
     return tuple(make(number) for number in _range(key, value, where, source, pixel=pixel))
 
 
+def _rotation(table: dict, where: str, source: str) -> int:
+    """``[plate] rotate``: a quarter turn, and nothing else. Absent means 0."""
+    if "rotate" not in table:
+        return 0
+    value = table["rotate"]
+    if type(value) is not int or value not in ROTATIONS:
+        raise Refusal(f"{source}: {where}: 'rotate' must be 0, 90, 180 or 270 (whole "
+                      f"degrees, counter-clockwise), got {value!r}")
+    return value
+
+
+def _placeholders(text: str, where: str, source: str) -> None:
+    """Only ``{exposure_s}`` may stand in the label, exactly once; any other brace is a typo.
+
+    The character number is what the operator needs: a Cyrillic "с" inside a brace looks
+    like a substitution to the eye, and "line 12 of your config" is the only useful answer.
+    """
+    index = 0
+    seen = 0
+    while index < len(text):
+        character = text[index]
+        if character in "{}":
+            if text.startswith(TEXT_PLACEHOLDER, index):
+                seen += 1
+                if seen > 1:
+                    raise Refusal(f"{source}: {where}: 'text' holds {TEXT_PLACEHOLDER} "
+                                  f"twice: one substitution is allowed, because the plate "
+                                  f"has one exposure time")
+                index += len(TEXT_PLACEHOLDER)
+                continue
+            raise Refusal(f"{source}: {where}: character {index + 1} of 'text' is "
+                          f"{character!r}: the only substitution is "
+                          f"{TEXT_PLACEHOLDER!r}, and any other brace is a typo, not a "
+                          f"label")
+        index += 1
+
+
+def fill_text(text: str, exposure_s: float | None, *, source: str = "the config") -> str:
+    """The label as it will be DRAWN: the one placeholder becomes the exposure time.
+
+    The number has no trailing zeros (``20``, ``7``, ``2.5``): a label is read by eye, and
+    "20.000s" is noise next to "20s".
+    """
+    if TEXT_PLACEHOLDER not in text:
+        return text
+    if exposure_s is None:
+        raise Refusal(f"{source}: the label {text!r} asks for {TEXT_PLACEHOLDER} and "
+                      f"[plate] has no 'exposure_s': there is no time to write in it")
+    return text.replace(TEXT_PLACEHOLDER, f"{exposure_s:g}")
+
+
 def _patch_gap(table: dict, where: str, source: str) -> Width | None:
     """``gap = "same"`` (the gap is the stripe width), or one width of its own."""
     present = [key for key in ("gap", "gap_mm", "gap_px") if key in table]
@@ -327,6 +394,7 @@ def _figure(table: object, index: int, source: str) -> FigureSpec:
         if type(characters) is not str:
             raise Refusal(f"{source}: {where}: 'text' must be a string of characters, got "
                           f"{_what(characters)}")
+        _placeholders(characters, where, source)
         return TextSpec(name=name, at_mm=at_mm, text=characters,
                         stroke_px=_whole(_required(table, "stroke_px", where, source),
                                          "stroke_px", where, source))
@@ -393,6 +461,7 @@ def parse_plate_config(text: str, *, source: str = "<config>",
     exposure_s = None
     if "exposure_s" in plate:
         exposure_s = _number(plate["exposure_s"], "exposure_s", "[plate]", source)
+    rotate = _rotation(plate, "[plate]", source)
 
     output = _output(data, source, base)
 
@@ -415,7 +484,7 @@ def parse_plate_config(text: str, *, source: str = "<config>",
                     for index, table in enumerate(raw, start=1))
     return PlateConfig(width_mm=width_mm, height_mm=height_mm, exposure_s=exposure_s,
                        marker_at_mm=marker_at_mm, figures=figures, output=output, text=text,
-                       path=path)
+                       rotate=rotate, path=path)
 
 
 def load_plate_config(path: str | Path) -> PlateConfig:
@@ -428,5 +497,6 @@ def load_plate_config(path: str | Path) -> PlateConfig:
 
 
 __all__ = ["BarsSpec", "FIGURE_KEYS", "FigureSpec", "GridSpec", "KINDS", "OUTPUT_KEYS",
-           "PatchesSpec", "PlateConfig", "PlateOutput", "SquareSpec", "load_plate_config",
+           "PLATE_KEYS", "PatchesSpec", "PlateConfig", "PlateOutput", "ROTATIONS",
+           "SquareSpec", "TEXT_PLACEHOLDER", "TextSpec", "fill_text", "load_plate_config",
            "parse_plate_config"]

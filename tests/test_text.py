@@ -27,7 +27,7 @@ import pytest
 from gerber2msla.font5x7 import BLANK, GLYPHS
 from gerber2msla.masks import Refusal, Screen, compose
 from gerber2msla.patterns import build_text
-from gerber2msla.plate_config import parse_plate_config
+from gerber2msla.plate_config import fill_text, parse_plate_config
 from gerber2msla.plate_layout import build_config_plate
 
 ASYMMETRIC = ["F", "L", "R", "2", "5", "7", "s"]
@@ -189,11 +189,14 @@ def test_a_dot_below_one_pixel_is_refused():
 # ─────────────────────────────── placement ─────────────────────────────────
 
 def test_a_label_over_a_figure_is_refused_by_compose_with_both_names(sixks_screen):
-    """One path places every figure: the label is not a special case of anything."""
+    """One path places every figure: the label is not a special case of anything.
+
+    The plate is composed on a canvas of its own before it is placed (the turn of 25.10),
+    so the refusal comes out of `build_config_plate` — from `compose` all the same.
+    """
     config = parse_plate_config(SQUARE_AND_TEXT, source="plate.toml")
-    placements, _ = build_config_plate(sixks_screen, config)
     with pytest.raises(Refusal) as caught:
-        compose(sixks_screen, placements, mirror=False, invert=False)
+        build_config_plate(sixks_screen, config)
     message = str(caught.value)
     assert "square #1" in message and "text #2" in message
     assert "overlap" in message
@@ -207,3 +210,37 @@ def test_the_mirror_reflects_the_label_with_the_plate(sixks_screen):
     flipped, _ = compose(sixks_screen, placements, mirror=True, invert=False)
     assert np.array_equal(flipped, np.fliplr(plain))
     assert np.count_nonzero(flipped) == np.count_nonzero(plain)
+
+
+# ────────────────── the label follows the plate's time (25.10) ──────────────
+
+@pytest.mark.parametrize("seconds, expected", [
+    (20.0, "20s"), (7.0, "7s"), (2.5, "2.5s"), (25.0, "25s"),
+], ids=["20 s", "7 s", "2.5 s", "25 s"])
+def test_the_time_in_a_label_has_no_trailing_zeros(seconds, expected):
+    """Read by eye: "20s" and "7s", never "20.000s"."""
+    assert fill_text("{exposure_s}s", seconds) == expected
+
+
+def test_a_label_without_the_substitution_is_left_alone():
+    assert fill_text("TOP", 20.0) == "TOP"
+
+
+def test_a_label_that_asks_for_a_time_the_plate_has_not_got_is_refused():
+    """`{exposure_s}` in a config with no `[plate] exposure_s` has nothing to say."""
+    with pytest.raises(Refusal) as caught:
+        fill_text("{exposure_s}s", None)
+    message = str(caught.value)
+    assert "'exposure_s'" in message and "\n" not in message
+
+
+TEXT_OF_TIME = (TEXT_ONLY.replace("height_mm = 80", "height_mm = 80\nexposure_s = 7")
+                .replace('text = "25s"', 'text = "{exposure_s}s"'))
+
+
+def test_the_drawn_label_carries_the_time_it_was_built_with(sixks_screen):
+    """The point of the substitution: a copied config with another time draws "7s"."""
+    config = parse_plate_config(TEXT_OF_TIME, source="plate.toml")
+    _, report = build_config_plate(sixks_screen, config)
+    assert "pattern: text '7s'" in "\n".join(report), \
+        "the file says {exposure_s}, the plate says 7s"

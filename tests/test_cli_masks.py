@@ -379,11 +379,28 @@ def test_the_patches_example_builds_with_its_rows_in_the_order_written(tmp_path,
     ("plate_70x80_30s.toml", "30s"),
 ])
 def test_every_time_plate_carries_its_own_label(tmp_path, capsys, name, label):
-    """Each plate of the series says its own exposure time in the plate's own font (Т1)."""
+    """Each plate of the series says its own exposure time in the plate's own font (Т1).
+
+    The label comes from `{exposure_s}`, not from a second copy of the number in the file
+    (25.10: a copied config kept saying "25s" after the time was changed to 7 s).
+    """
     config = _example_in(tmp_path, name)
+    assert 'text = "{exposure_s}s"' in config.read_text(encoding="utf-8"), \
+        "the example must ask for the plate's own time, not repeat it"
     assert main(["masks", "plate", "--config", str(config)]) == 0
     out = capsys.readouterr().out
     assert f"pattern: text {label!r}" in out
     assert "drawn: 102 x 42 px = 3.468 x 1.428 mm" in out
     written = tmp_path / f"{name.removesuffix('.toml')}.px6s"
     assert written.is_file(), f"the label's plate was not written: {written}"
+
+
+def test_a_quarter_turn_puts_the_plate_on_its_side(tmp_path, capsys):
+    """`[plate] rotate = 90` turns the finished plate and centres it again (25.10)."""
+    config = _example_in(tmp_path, "plate_70x80_20s_rot90.toml")
+    assert main(["masks", "plate", "--config", str(config)]) == 0
+    out = capsys.readouterr().out
+    assert ("plate: 70.000 x 80.000 mm (2059 x 2353 px) turned 90 degrees "
+            "counter-clockwise to 2353 x 2059 px, centred on the 5760 x 3600 px screen at "
+            "1703, 770 px") in out
+    assert "pattern: text '20s'" in out, "the label is turned with the plate"
