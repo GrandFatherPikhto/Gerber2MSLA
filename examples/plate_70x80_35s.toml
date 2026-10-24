@@ -1,0 +1,49 @@
+# Test plate 70 x 80 mm, 5 mm free margin on every side; side exposed for 25 s.
+# Millimetres; origin at the plate's top-left corner. Widths in PIXELS: at 34 um a
+# millimetre request collapses (0.06 and 0.08 mm are both 2 px), the pixel form does not.
+
+[output]
+template = "../tests/data/01_test02.px6s"
+px6s = "../out/plate_70x80_35s.px6s"
+
+[plate]
+width_mm = 70
+height_mm = 80
+exposure_s = 35
+
+[marker]
+at_mm = [7, 7]                 # the letter F: how it reads on the copper tells the mirror
+
+[[figure]]                     # the frame: measure OUTER edge to outer edge -> the real pixel
+kind = "square"
+at_mm = [5, 5]
+size_mm = [60, 70]
+line_px = 6
+
+[[figure]]                     # one 8 mm patch per width, 1..6 px = 34..204 um; left: lines along X, right: along Y
+kind = "patches"
+at_mm = [8, 11]
+patch_mm = 8
+patch_gap_mm = 1.5
+widths_px = { from = 1, to = 6, step = 1 }
+gap = "same"
+
+[[figure]]                     # evenness over the field: line 6 px, gap 4 px, both directions
+kind = "grid"
+at_mm = [29, 11]
+size_mm = [33, 33]
+line_px = 6
+gap_px = 4
+direction = "both"
+
+[[figure]]                     # the laser's own bars (Gerber2LDI defaults): the direct comparison with LDI
+kind = "bars"
+at_mm = [29, 48]
+widths_mm = [0.2, 0.15, 0.1, 0.08, 0.06, 0.05]
+lines = 5
+
+[[figure]]                     # the label of THIS plate: the time, in the plate's own font
+kind = "text"
+at_mm = [29, 60]
+text = "25s"
+stroke_px = 6                  # one font dot = 6 x 6 px = 204 um; letters 42 px = 1.43 mm tall
