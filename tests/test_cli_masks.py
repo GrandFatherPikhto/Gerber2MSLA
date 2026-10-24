@@ -371,3 +371,19 @@ def test_the_patches_example_builds_with_its_rows_in_the_order_written(tmp_path,
     out = capsys.readouterr().out
     assert "pattern: patches, 4 rows" in out
     assert "row 1: 0.050 mm" in out and "row 4: 0.200 mm" in out
+
+
+@pytest.mark.parametrize("name, label", [
+    ("plate_70x80_20s.toml", "20s"),
+    ("plate_70x80_25s.toml", "25s"),
+    ("plate_70x80_30s.toml", "30s"),
+])
+def test_every_time_plate_carries_its_own_label(tmp_path, capsys, name, label):
+    """Each plate of the series says its own exposure time in the plate's own font (Т1)."""
+    config = _example_in(tmp_path, name)
+    assert main(["masks", "plate", "--config", str(config)]) == 0
+    out = capsys.readouterr().out
+    assert f"pattern: text {label!r}" in out
+    assert "drawn: 102 x 42 px = 3.468 x 1.428 mm" in out
+    written = tmp_path / f"{name.removesuffix('.toml')}.px6s"
+    assert written.is_file(), f"the label's plate was not written: {written}"

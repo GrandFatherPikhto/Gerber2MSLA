@@ -61,7 +61,7 @@ from .config_strict import (_keys, _loads, _must_exist, _number, _pair, _read_te
 from .masks import Refusal
 from .patterns import DIRECTIONS, Width
 
-KINDS = ("bars", "grid", "patches", "square")
+KINDS = ("bars", "grid", "patches", "square", "text")
 """Every figure kind the config may ask for; anything else is a refusal, not a guess."""
 
 FIGURE_KEYS: dict[str, tuple[str, ...]] = {
@@ -71,6 +71,7 @@ FIGURE_KEYS: dict[str, tuple[str, ...]] = {
     "patches": ("at_mm", "gap", "gap_mm", "gap_px", "kind", "patch_gap_mm", "patch_mm",
                 "widths_mm", "widths_px"),
     "square": ("at_mm", "kind", "line_mm", "line_px", "size_mm"),
+    "text": ("at_mm", "kind", "stroke_px", "text"),
 }
 """The keys of each kind, sorted: this table IS the strictness of a figure.
 
@@ -143,7 +144,22 @@ class PatchesSpec:
     kind: ClassVar[str] = "patches"
 
 
-FigureSpec = SquareSpec | GridSpec | BarsSpec | PatchesSpec
+@dataclass(frozen=True, slots=True)
+class TextSpec:
+    """A label in the utility's own font; ``stroke_px`` is the size of ONE font dot.
+
+    The dot is whole SCREEN pixels, not millimetres (plan Т1): the label must be the same
+    picture on every machine, and a non-square pixel must not lean the letters.
+    """
+
+    name: str
+    at_mm: tuple[float, float]
+    text: str
+    stroke_px: int
+    kind: ClassVar[str] = "text"
+
+
+FigureSpec = SquareSpec | GridSpec | BarsSpec | PatchesSpec | TextSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +321,15 @@ def _figure(table: object, index: int, source: str) -> FigureSpec:
         return BarsSpec(name=name, at_mm=at_mm, widths=_widths(table, where, source),
                         lines=_whole(_required(table, "lines", where, source), "lines",
                                      where, source))
+
+    if kind == "text":
+        characters = _required(table, "text", where, source)
+        if type(characters) is not str:
+            raise Refusal(f"{source}: {where}: 'text' must be a string of characters, got "
+                          f"{_what(characters)}")
+        return TextSpec(name=name, at_mm=at_mm, text=characters,
+                        stroke_px=_whole(_required(table, "stroke_px", where, source),
+                                         "stroke_px", where, source))
 
     return PatchesSpec(
         name=name, at_mm=at_mm,

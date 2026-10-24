@@ -41,3 +41,9 @@ kind = "bars"
 at_mm = [29, 48]
 widths_mm = [0.2, 0.15, 0.1, 0.08, 0.06, 0.05]
 lines = 5
+
+[[figure]]                     # the label of THIS plate: the time, in the plate's own font
+kind = "text"
+at_mm = [29, 60]
+text = "25s"
+stroke_px = 6                  # one font dot = 6 x 6 px = 204 um; letters 42 px = 1.43 mm tall

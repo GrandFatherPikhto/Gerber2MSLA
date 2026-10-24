@@ -32,6 +32,10 @@ PATTERNS (the layout is the label: there is no caption on a mask)
          numbers: pixel_um = measured_mm / n * 1000. The diagonals only check the
          measurement (d1 = d2 expected); there is no skew formula, because the LCD grid
          has no skew.
+  text — a label in the utility's OWN 5 x 7 font (`font5x7.py`, plan Т1): one font dot is
+         `stroke_px` x `stroke_px` SCREEN pixels, so the label is the same picture on any
+         machine and does not lean on a non-square pixel. A character outside the font is
+         a refusal with the character and its place; a space is never put in its stead.
 
 A width may be asked for in MILLIMETRES or in WHOLE PIXELS of the screen (`--widths-px`,
 `--line-px`, `--gap-px`, `--side-px`); the two forms exclude each other. The pixel form is
@@ -49,6 +53,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .font5x7 import BLANK, GLYPHS, GLYPH_HEIGHT, GLYPH_WIDTH, LETTER_GAP
 from .masks import (MARKER_GAP_MM, UM_PER_MM, WHITE, Figure, Placement, Refusal, Screen,
                     _actual, _quantised, marker_pixels, origin_pixels)
 
@@ -389,6 +394,56 @@ def build_square(screen: Screen, side_x_mm: float, side_y_mm: float, line: Width
     ) if text]
     return Figure(pixels=figure,
                   report=tuple(report) + tuple(f"warning: {text}" for text in warnings))
+
+
+# ───────────────────────────── text (plan Т1) ──────────────────────────────
+
+def build_text(screen: Screen, text: str, stroke_px: int) -> Figure:
+    """A label in the utility's own 5 x 7 font; one font dot is `stroke_px` screen pixels.
+
+    The dot is a square IN PIXELS, not in millimetres: on a non-square pixel the letters
+    keep their shape instead of leaning, and the report says so in words. A character
+    outside `font5x7.GLYPHS` is a REFUSAL with the character and its place in the line — a
+    space quietly put in its stead would make the label a different label.
+    """
+    if not text:
+        raise Refusal("the label is empty: a 'text' figure needs the characters to draw")
+    if stroke_px < 1:
+        raise Refusal(f"stroke_px must be at least 1 whole screen pixel, got {stroke_px}")
+    for place, character in enumerate(text, start=1):
+        if character not in GLYPHS:
+            raise Refusal(
+                f"character {place} of the label {text!r} is {character!r}, and this font "
+                f"has no such glyph: the set is 0-9, A-Z, a-z, space and . , - _ : / ( ) "
+                f"+ = % (Latin only)")
+
+    dots = len(text) * (GLYPH_WIDTH + LETTER_GAP) - LETTER_GAP
+    width_px = dots * stroke_px
+    height_px = GLYPH_HEIGHT * stroke_px
+    pixels = np.zeros((height_px, width_px), dtype=np.uint8)
+    for place, character in enumerate(text):
+        left = place * (GLYPH_WIDTH + LETTER_GAP) * stroke_px
+        for row, dots_row in enumerate(GLYPHS[character]):
+            for column, dot in enumerate(dots_row):
+                if dot != BLANK:
+                    x_px = left + column * stroke_px
+                    y_px = row * stroke_px
+                    pixels[y_px:y_px + stroke_px, x_px:x_px + stroke_px] = WHITE
+
+    white = int(np.count_nonzero(pixels))
+    report = [
+        f"pattern: text {text!r}, {len(text)} character(s), one font dot = {stroke_px} x "
+        f"{stroke_px} px = {stroke_px * screen.pixel_x_um:.1f} x "
+        f"{stroke_px * screen.pixel_y_um:.1f} um",
+        f"font: {GLYPH_WIDTH} x {GLYPH_HEIGHT} dots per character, {LETTER_GAP} dot between "
+        f"letters, drawn by this utility (no TTF: the same picture on every machine)",
+        f"drawn: {width_px} x {height_px} px = {screen.mm_x(width_px):.3f} x "
+        f"{screen.mm_y(height_px):.3f} mm",
+        "a font dot is a square in PIXELS, not in millimetres: on a non-square pixel the "
+        "letters keep their shape while their width in um differs per axis",
+        f"white: {white} px",
+    ]
+    return Figure(pixels=pixels, report=tuple(report))
 
 
 # ───────────────────────────── plate (plan П5б) ────────────────────────────

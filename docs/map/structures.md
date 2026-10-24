@@ -97,6 +97,24 @@ Width                              — неизменяемый (patterns.py:65)
 Обе формы заканчиваются одним числом пикселей НА ОСЬ — это единственное, что знает рисование. Обе формы
 сразу — отказ `use either … or …, not both`: два ответа на один вопрос не сливаются.
 
+## Надпись — `gerber2msla/font5x7.py` и `patterns.build_text` (Т1)
+
+```
+GLYPHS: dict[str, tuple[str, ...]]  — 7 строк по 5 точек ("#" горит, "." нет); набор:
+                                      0-9, A-Z, a-z, пробел и . , - _ : / ( ) + = %
+GLYPH_WIDTH / GLYPH_HEIGHT         — 5 / 7 точек
+LETTER_GAP                         — 1 пустая точка между буквами: ширина (6n − 1) точек
+
+build_text(screen, text, stroke_px) -> Figure
+  отказы            пустая строка; stroke_px < 1; символ вне GLYPHS — с СИМВОЛОМ и МЕСТОМ
+                    в строке (пробел вместо него не ставится)
+  точка шрифта      stroke_px x stroke_px ПИКСЕЛЕЙ экрана, не мм: на пикселе 34 x 30 мкм
+                    картинка та же, буквы не кланяются
+  отчёт             текст, точка в px и um, набор и размер сетки, размер фигуры в px и мм
+  дальше            та же `Placement` → `compose`: размещение, зеркало и полярность
+                    особого случая для надписи не знают
+```
+
 ## Квадрат — `gerber2msla/patterns.py` (П5а)
 
 ```
@@ -224,7 +242,9 @@ PlateOutput                     — всё про принтер, ни одно�
   px6s, png: Path | None        — хотя бы один («the config writes nothing»); оба — из
                                   ОДНОЙ картинки compose
 
-FigureSpec = SquareSpec | GridSpec | BarsSpec | PatchesSpec
+FigureSpec = SquareSpec | GridSpec | BarsSpec | PatchesSpec | TextSpec
+
+TextSpec                        — надпись (Т1): text: str, stroke_px: int (целое ≥ 1)
   name: str                     — «kind #N», N с 1 по порядку в файле: этим именем
                                   фигуру называют отказы compose и пластины
   at_mm: tuple                  — левый верхний угол ОТ УГЛА ПЛАСТИНЫ

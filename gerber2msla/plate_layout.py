@@ -27,8 +27,9 @@ from __future__ import annotations
 
 from .masks import (Figure, Placement, Refusal, Screen, _quantised, marker_pixels,
                     origin_pixels)
-from .patterns import build_bars, build_grid, build_patches, build_square
-from .plate_config import BarsSpec, FigureSpec, GridSpec, PlateConfig, SquareSpec
+from .patterns import build_bars, build_grid, build_patches, build_square, build_text
+from .plate_config import (BarsSpec, FigureSpec, GridSpec, PatchesSpec, PlateConfig,
+                           SquareSpec, TextSpec)
 
 
 def _corner_px(at_mm: tuple[float, float], screen: Screen) -> tuple[int, int]:
@@ -50,7 +51,12 @@ def _figure_of(spec: FigureSpec, screen: Screen) -> Figure:
                           spec.direction)
     if isinstance(spec, BarsSpec):
         return build_bars(screen, spec.widths, spec.lines)
-    return build_patches(screen, spec.patch_mm, spec.widths, spec.gap, spec.patch_gap_mm)
+    if isinstance(spec, PatchesSpec):
+        return build_patches(screen, spec.patch_mm, spec.widths, spec.gap,
+                             spec.patch_gap_mm)
+    if isinstance(spec, TextSpec):
+        return build_text(screen, spec.text, spec.stroke_px)
+    raise AssertionError(f"a figure spec this module does not know: {spec!r}")
 
 
 def _require_on_plate(name: str, figure: Figure, x_px: int, y_px: int,

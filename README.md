@@ -106,7 +106,7 @@ exposure_s = 25                  # for a .px6s; both times come from here
 at_mm = [3.196, 3.196]
 
 [[figure]]
-kind = "square"                  # square | bars | patches | grid
+kind = "square"                  # square | bars | patches | grid | text
 at_mm = [2, 2]
 size_mm = [66, 74]
 line_mm = 0.2                    # or line_px = 6
@@ -118,6 +118,12 @@ patch_mm = 10
 patch_gap_mm = 1.5
 widths_mm = { from = 0.05, to = 0.20, step = 0.05 }   # inclusive
 gap = "same"                     # gap = the stripe width; or gap_mm / gap_px
+
+[[figure]]
+kind = "text"                    # a label in the plate's own 5 x 7 font
+at_mm = [29, 60]
+text = "25s"
+stroke_px = 6                    # one font dot = 6 x 6 SCREEN pixels
 ```
 
 * **The config is strict in both directions.** There are no defaults: a key that is not
@@ -144,6 +150,13 @@ gap = "same"                     # gap = the stripe width; or gap_mm / gap_px
   shows), the right one stripes along Y (the X resolution). A stripe is drawn whole and
   the first is flush with the near edge — the leftover at the far edge is a gap, because
   a stretched stripe would measure a width nobody asked for.
+* **`text` is the utility's OWN 5 x 7 font** ([`font5x7.py`](gerber2msla/font5x7.py)),
+  not a TTF: a vector font is rasterised by the platform, comes out grey and slightly
+  different machine to machine, and the plates of one series are compared with a
+  magnifier. One font dot is `stroke_px` x `stroke_px` SCREEN pixels — a square in
+  PIXELS, so a non-square pixel does not lean the letters. The set is `0-9`, `A-Z`,
+  `a-z`, space and `. , - _ : / ( ) + = %`; anything else (Cyrillic, for one) is a
+  refusal that names the character and its place in the line.
 * **The config travels with the mask.** The whole file, byte for byte, goes into the PNG
   chunk `plate_config` (iTXt, UTF-8 — your comments are yours, and Russian is fine); the
   report prints it too. The report chunk `msla_tests` is unchanged.

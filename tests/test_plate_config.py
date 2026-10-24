@@ -76,6 +76,11 @@ GRID = BASE.replace(
     'kind = "grid"\nat_mm = [1, 1]\nsize_mm = [10, 10]\nline_mm = 0.2\n'
     'gap_mm = 0.2\ndirection = "both"')
 
+TEXT = BASE.replace(
+    'kind = "square"\nat_mm = [1, 1]\nsize_mm = [10, 10]\nline_mm = 0.2',
+    'kind = "text"\nat_mm = [1, 1]\ntext = "25s"\nstroke_px = 6')
+"""The label kind of plan Т1: the string and the size of ONE font dot."""
+
 NO_FIGURES = OUTPUT + """
 [plate]
 width_mm = 16
@@ -125,16 +130,23 @@ size_mm = [3, 3]
 line_mm = 0.2
 gap_mm = 0.2
 direction = "both"
+
+[[figure]]
+kind = "text"
+at_mm = [1, 14]
+text = "25s"
+stroke_px = 6
 '''
 
 
 def test_a_config_with_every_kind_is_read_into_specs():
-    """Four kinds, the names numbered in the order of the FILE, the text kept whole."""
+    """Five kinds, the names numbered in the order of the FILE, the text kept whole."""
     config = _read(EVERY_KIND)
     assert [figure.kind for figure in config.figures] == ["square", "bars", "patches",
-                                                          "grid"]
+                                                          "grid", "text"]
     assert [figure.name for figure in config.figures] == ["square #1", "bars #2",
-                                                          "patches #3", "grid #4"]
+                                                          "patches #3", "grid #4",
+                                                          "text #5"]
     assert (config.width_mm, config.height_mm) == (16.0, 16.0)
     assert config.marker_at_mm is None, "no [marker] table, no marker"
     assert config.text == EVERY_KIND, "the chunk of K2 carries the file as it was read"
@@ -151,6 +163,8 @@ UNKNOWN_KEY_CELLS = [
      "'width_mm'", "the known keys are at_mm"),
     ("figure", _with_line(BASE, "line_mm", "line_mm = 0.2\nlines = 5"),
      "'lines'", "at_mm, kind, line_mm, line_px, size_mm"),
+    ("text figure", _with_line(TEXT, "stroke_px", "stroke_px = 6\nlines = 5"),
+     "'lines'", "the known keys are at_mm, kind, stroke_px, text"),
     ("range table", PATCHES.replace("step = 0.05 }", "step = 0.05, count = 2 }"),
      "'count'", "the known keys are from, to, step"),
 ]
@@ -176,6 +190,8 @@ MISSING_KEY_CELLS = [
     ("patch_gap_mm", _with_line(PATCHES, "patch_gap_mm", ""), "patch_gap_mm"),
     ("widths", _with_line(PATCHES, "widths_mm", ""), "no widths"),
     ("gap", _with_line(PATCHES, "gap", ""), "no gap"),
+    ("text", _with_line(TEXT, "text", ""), "text"),
+    ("stroke_px", _with_line(TEXT, "stroke_px", ""), "stroke_px"),
 ]
 
 
@@ -192,7 +208,7 @@ def test_an_unknown_figure_kind_is_refused_with_the_list():
     """`patche` is not a figure: the refusal names the kinds that exist."""
     message = _message(BASE.replace('kind = "square"', 'kind = "patche"'))
     assert "unknown figure kind 'patche'" in message
-    assert "the kinds are bars, grid, patches, square" in message
+    assert "the kinds are bars, grid, patches, square, text" in message
 
 
 TYPE_CELLS = [
@@ -222,6 +238,25 @@ def test_a_value_of_the_wrong_type_is_refused_with_its_key(label, old, new, name
                                                            expected):
     """The key AND what was found: `true` is not a height, 6.0 is not a pixel count."""
     message = _message(BASE.replace(old, new))
+    assert named in message and expected in message
+
+
+TEXT_TYPE_CELLS = [
+    ("a number where the label goes", 'text = "25s"', "text = 25", "'text'",
+     "must be a string of characters"),
+    ("a fraction of a dot", "stroke_px = 6", "stroke_px = 6.5", "stroke_px",
+     "must be a whole number of pixels"),
+    ("a bool where the dot goes", "stroke_px = 6", "stroke_px = true", "stroke_px",
+     "must be a whole number of pixels"),
+]
+
+
+@pytest.mark.parametrize("label, old, new, named, expected", TEXT_TYPE_CELLS,
+                         ids=[cell[0] for cell in TEXT_TYPE_CELLS])
+def test_a_text_figure_of_the_wrong_type_is_refused_with_its_key(label, old, new, named,
+                                                                 expected):
+    """The label is a STRING and the dot is a WHOLE pixel count — no coercion either way."""
+    message = _message(_with_line(TEXT, old, new))
     assert named in message and expected in message
 
 
