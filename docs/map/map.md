@@ -77,6 +77,20 @@ gerber2msla dose MASK.png --template real.px6s -o out/dose --series 15 35 5
   stdout: таблица «файл → обычное и нижнее» из ПРОЧИТАННЫХ файлов + сколько записано
 ```
 
+**Плата из Gerber (план Г1, Г2):**
+```
+gerber2msla board F_Cu.gbr --drill PTH.drl --outline Edge_Cuts.gbr --template T.px6s --exposure-s 25 -o out/top.px6s
+  cli_board: экран ВСЕГДА из шаблона (--screen-px с ним — отказ); пиксель — из заголовка
+             файла или из --pixel-um (замер; заголовок НЕ меняется), отчёт называет источник;
+             -o *.png — маска, -o *.px6s — файл принтера (нужны шаблон и время)
+  board:     кадр по контуру или по меди → iter_rows с шагом pixel_y_mm → пиксели по ЦЕНТРАМ →
+             ОДИН переворот Y → отверстия чёрным ПОСЛЕ меди → Figure
+  masks:     размещение (центр или --at) → --mirror/--invert на всю картинку → PNG
+  px6s_write: машинное байт в байт из шаблона, слой — из картинки
+  stdout:    pixel: … (откуда), copper/frame/sampling/holes/white, фигура, зеркало,
+             полярность; stderr — строки warning:; код 2 — отказ одной строкой
+```
+
 Круг проверки: PNG → `.px6s` → `dump` → PNG пиксель в пиксель; поля, которые не должны меняться, — байт в
 байт как в шаблоне.
 

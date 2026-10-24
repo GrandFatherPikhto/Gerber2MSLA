@@ -32,6 +32,12 @@ Gerber2MSLA, 23.10.2026, по образцу Gerber2LDI `docs/map/contracts.md`.
 | **Переворот Y — ОДИН, в `board.build_board`** | `iter_rows` идёт от низа платы вверх, строки PNG — сверху вниз: `image_row = height_px − 1 − index`, один раз и только там; без `--mirror` картинка = вид на плату СВЕРХУ, как в KiCad, и для `F_Cu`, и для `B_Cu` | `gerber2msla/board.py` (`build_board`) | `tests/test_board.py`: `test_the_letter_g_is_read_as_seen_from_above_after_the_one_y_flip`, `test_the_outline_sets_the_frame_so_the_pad_keeps_its_offset`; мутация «Y не перевёрнут» убита обеими | план Г1 |
 | **Рамка одна для меди и сверловки; дырки — ПОСЛЕ меди** | `--outline` — габарит контура (единственный способ совместить верх и низ одной платы), без него — габарит меди и строка `warning:`; каждое отверстие — круг ДИАМЕТРОМ из файла, чёрным ПОСЛЕ меди; уже 2 px в диаметре — `warning:` | `gerber2msla/board.py` (`_frame`, `_pour_holes`, `SMALL_HOLE_PX`) | `tests/test_board.py`: `test_the_outline_sets_the_frame_so_the_pad_keeps_its_offset`, `test_the_report_warns_when_the_frame_comes_from_the_copper`, `test_a_hole_is_black_inside_the_pad_and_the_pad_is_solid_without_it`, `test_the_report_announces_a_hole_narrower_than_two_pixels`; мутации «рамка по меди» и «радиус = диаметр» убиты | план Г1 |
 
+## Экран и пиксель команды `board` (план Г2)
+
+| договор | суть | где в коде | сторож | канон |
+|---|---|---|---|---|
+| **Экран — из шаблона; пиксель — из заголовка ИЛИ из замера** | с `--template` разрешение берётся из файла, а `--screen-px` рядом с ним — отказ «the template fixes the screen». `--pixel-um` меняет ТОЛЬКО геометрию (сколько пикселей экрана занимает миллиметр платы) и может быть неквадратным; пиксель в ЗАГОЛОВКЕ файла — машинное поле и не меняется. Отчёт называет источник числами: `(template header)` либо `(measured, --pixel-um; the file header keeps NN.NN)` | `gerber2msla/cli_board.py` (`_screen_for`) | `tests/test_cli_board.py`: `test_the_template_fixes_the_screen`, `test_the_pixel_comes_from_the_header_unless_it_is_measured`, `test_a_measured_pixel_changes_the_height_but_not_the_file_header` (34x30 и 34.00 → разная высота платы, блоки `header`/`machine`/`software`/`extra` байт в байт); мутация «экран перезаписан» убита | план Г2; решение 24.10 |
+
 ## Формат `px6s` (план П1–П3)
 
 | договор | суть | где в коде | сторож | канон |

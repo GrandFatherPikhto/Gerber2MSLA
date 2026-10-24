@@ -2,8 +2,9 @@
 
 The router only: the root parser, ``--version``, and the ONE-line refusal. The command
 groups live next door — ``cli_masks.py`` draws masks, ``cli_px6s.py`` writes the printer
-file (and will read it back in П3). Masks never move into the px6s module: the split is
-"masks here, write/dump there", not the other way round.
+file (and reads it back), ``cli_board.py`` turns a board's Gerber into either of them.
+Masks never move into the px6s module: the split is "masks here, write/dump there", not
+the other way round.
 
 Expected refusals (``masks.Refusal``) and unreadable printer files (``px6s.Px6sError``)
 are printed as ONE line and return code 2, with no traceback: an unusable mask or template
@@ -18,7 +19,7 @@ import argparse
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
-from . import cli_masks, cli_px6s
+from . import cli_board, cli_masks, cli_px6s
 from .masks import Refusal
 from .px6s import Px6sError
 
@@ -44,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", metavar="COMMAND")
     cli_masks.add_parser(commands)
     cli_px6s.add_parser(commands)
+    cli_board.add_parser(commands)
     return parser
 
 
