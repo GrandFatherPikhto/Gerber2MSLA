@@ -56,8 +56,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-from .config_strict import (_keys, _loads, _number, _pair, _read_text, _required,
-                            _string, _table, _what, _whole)
+from .config_strict import (_keys, _loads, _must_exist, _number, _pair, _read_text,
+                            _required, _resolve, _string, _table, _text, _what, _whole)
 from .masks import Refusal
 from .patterns import DIRECTIONS, Width
 
@@ -80,7 +80,8 @@ added to the reader and forgotten in the message, or the other way round.
 
 PLATE_KEYS = ("exposure_s", "height_mm", "width_mm")
 MARKER_KEYS = ("at_mm",)
-ROOT_KEYS = ("figure", "marker", "plate")
+OUTPUT_KEYS = ("pixel_um", "png", "px6s", "template")
+ROOT_KEYS = ("figure", "marker", "output", "plate")
 RANGE_KEYS = ("from", "to", "step")
 RANGE_TOLERANCE = 1e-9
 """How far a float step may miss the end of its range before the last width is lost.
@@ -146,6 +147,25 @@ FigureSpec = SquareSpec | GridSpec | BarsSpec | PatchesSpec
 
 
 @dataclass(frozen=True, slots=True)
+class PlateOutput:
+    """EVERYTHING about the printer: the template, the measurement, and where to write.
+
+    ``template`` is ALWAYS required (plan Б0, decision of 24.10): the screen comes from
+    the printer's own file and from nowhere else, because ``--screen-px`` and
+    ``--pixel-um`` next to ``--config`` are refusals. The plan's "required when px6s is
+    given" was too narrow — a PNG needs a screen too.
+
+    ``pixel_um`` is a MEASUREMENT (rule Г2): it changes the geometry only, and the pixel
+    stored in the file header stays the template's. Absent — the header's pixel is used.
+    """
+
+    template: Path
+    pixel_um: tuple[float, float] | None = None
+    px6s: Path | None = None
+    png: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PlateConfig:
     """A config read and checked: no pixels yet, only what the operator asked for."""
 
@@ -154,6 +174,7 @@ class PlateConfig:
     exposure_s: float | None
     marker_at_mm: tuple[float, float] | None
     figures: tuple[FigureSpec, ...]
+    output: PlateOutput
     text: str
     """The file as it was read: it goes into the PNG chunk whole, UTF-8 (plan K2)."""
     path: Path | None = None
@@ -298,9 +319,42 @@ def _figure(table: object, index: int, source: str) -> FigureSpec:
 
 # ──────────────────────────────── reading ──────────────────────────────────
 
+def _output(data: dict, source: str, base: Path | None) -> PlateOutput:
+    """The ``[output]`` table: the printer's file, the optional measurement, the paths.
+
+    Both paths are optional, but not both absent: a config that writes nothing is a
+    config that does not say what it is for — and next to ``--config`` there is no ``-o``
+    to fall back on.
+    """
+    table = _table(_required(data, "output", "the top level", source), "the [output] table",
+                   source)
+    _keys(table, OUTPUT_KEYS, "[output]", source)
+    template = _resolve(_text(_required(table, "template", "[output]", source), "template",
+                              "[output]", source), base)
+    pixel_um = None
+    if "pixel_um" in table:
+        pixel_um = _pair(table["pixel_um"], "pixel_um", "[output]", source)
+    px6s = None
+    if "px6s" in table:
+        px6s = _resolve(_text(table["px6s"], "px6s", "[output]", source), base)
+    png = None
+    if "png" in table:
+        png = _resolve(_text(table["png"], "png", "[output]", source), base)
+    if px6s is None and png is None:
+        raise Refusal(f"{source}: [output]: no 'px6s' and no 'png': the config writes "
+                      f"nothing (there is no -o to fall back on next to --config)")
+    return PlateOutput(template=template, pixel_um=pixel_um, px6s=px6s, png=png)
+
+
 def parse_plate_config(text: str, *, source: str = "<config>",
+                       base: Path | None = None,
                        path: Path | None = None) -> PlateConfig:
-    """Read the config text into specs; every refusal is one line that names the place."""
+    """Read the config text into specs; every refusal is one line that names the place.
+
+    ``base`` is the directory relative paths count from — the config file's own, when the
+    text came from a file. With ``base=None`` the paths stay as written, which is what a
+    cell about the FORMAT needs.
+    """
     data = _loads(text, source)
     _keys(data, ROOT_KEYS, "the top level", source)
 
@@ -314,6 +368,8 @@ def parse_plate_config(text: str, *, source: str = "<config>",
     exposure_s = None
     if "exposure_s" in plate:
         exposure_s = _number(plate["exposure_s"], "exposure_s", "[plate]", source)
+
+    output = _output(data, source, base)
 
     marker_at_mm = None
     if "marker" in data:
@@ -333,15 +389,19 @@ def parse_plate_config(text: str, *, source: str = "<config>",
     figures = tuple(_figure(table, index, source)
                     for index, table in enumerate(raw, start=1))
     return PlateConfig(width_mm=width_mm, height_mm=height_mm, exposure_s=exposure_s,
-                       marker_at_mm=marker_at_mm, figures=figures, text=text, path=path)
+                       marker_at_mm=marker_at_mm, figures=figures, output=output, text=text,
+                       path=path)
 
 
 def load_plate_config(path: str | Path) -> PlateConfig:
-    """Read the file as UTF-8 and parse it; a missing file is a refusal, not a trace."""
+    """Read the file, resolve its paths against ITS directory, check the template exists."""
     target = Path(path)
     text = _read_text(target, "the plate config")
-    return parse_plate_config(text, source=str(target), path=target)
+    config = parse_plate_config(text, source=str(target), base=target.parent, path=target)
+    _must_exist(config.output.template, "template", "[output]", str(target))
+    return config
 
 
-__all__ = ["BarsSpec", "FIGURE_KEYS", "FigureSpec", "GridSpec", "KINDS", "PatchesSpec",
-           "PlateConfig", "SquareSpec", "load_plate_config", "parse_plate_config"]
+__all__ = ["BarsSpec", "FIGURE_KEYS", "FigureSpec", "GridSpec", "KINDS", "OUTPUT_KEYS",
+           "PatchesSpec", "PlateConfig", "PlateOutput", "SquareSpec", "load_plate_config",
+           "parse_plate_config"]

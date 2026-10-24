@@ -7,6 +7,11 @@
 # a 2 mm margin, exactly as the built-in plate has it, so the two plates can be laid side
 # by side and read with one caliper.
 
+[output]
+template = "../tests/data/01_test02.px6s"
+px6s = "../out/plate_patches_25s.px6s"
+png = "../out/plate_patches_25s.png"
+
 [plate]
 width_mm = 70
 height_mm = 78

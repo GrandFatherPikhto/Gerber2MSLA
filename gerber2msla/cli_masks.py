@@ -9,10 +9,12 @@ command is now a subcommand of this utility. The drawing layer lives in `masks.p
 patterns in `patterns.py`.
 
 `plate` has TWO layouts: the built-in one (plan П5б, unchanged) and the one a TOML config
-asks for (plan К2). With ``--config`` the config is the ONLY source of truth: the flags
-that place figures the built-in way are refused BY NAME, ``--exposure-s`` is refused
-because ``[plate] exposure_s`` holds the time, and the screen and the pixel come from
-``--template`` or the two flags — the same `screen_for` the `board` command uses.
+asks for (plans К2 and Б0). With ``--config`` the config is the ONLY source of truth: the
+flags that place figures the built-in way are refused BY NAME, and so are ``-o``,
+``--template``, ``--screen-px``, ``--pixel-um`` and ``--exposure-s`` — everything about
+the printer and the output lives in the config's ``[output]`` table. Without ``--config``
+nothing changes: ``-o`` is mandatory and the screen comes from ``--template`` or the two
+flags, through the same `screen_for` the `board` command uses.
 
 The root parser, `--version` and the one-line refusal live in `cli.py`; the printer-file
 commands live in `cli_px6s.py`. This module only ADDS its command group to the root.
@@ -26,6 +28,7 @@ import argparse
 import math
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from .cli_px6s import _positive_seconds
 from .masks import Refusal, Screen, add_marker, compose, place_figure, write_mask
@@ -279,8 +282,10 @@ def add_parser(commands: argparse._SubParsersAction) -> None:
     plate_parser.add_argument("--exposure-s", type=_positive_seconds, default=None,
                               help="exposure for the .px6s, both fields; refused with "
                                    "--config, where [plate] exposure_s is the one source of truth")
-    plate_parser.add_argument("-o", "--output", required=True,
-                              help="out/plate.png for a mask, out/plate.px6s for the printer file")
+    plate_parser.add_argument("-o", "--output", default=None,
+                              help="out/plate.png for a mask, out/plate.px6s for the printer file; "
+                                   "mandatory WITHOUT --config, refused WITH it (the config "
+                                   "names its own [output])")
     plate_parser.add_argument("--mirror", action="store_true",
                               help="reflect the whole picture along X (a resist facing the screen)")
     plate_parser.add_argument("--invert", action="store_true",
@@ -381,10 +386,16 @@ PLATE_LAYOUT_FLAGS = (
     ("square_line_px", "--square-line-px"), ("line_mm", "--line-mm"),
     ("line_px", "--line-px"), ("gap_mm", "--gap-mm"), ("gap_px", "--gap-px"),
     ("direction", "--direction"),
+    #Everything about the printer and the output lives in [output] now (plan Б0).
+    ("output", "-o"), ("template", "--template"), ("screen_px", "--screen-px"),
+    ("pixel_um", "--pixel-um"), ("exposure_s", "--exposure-s"),
 )
-"""Flags that place figures the BUILT-IN way. Next to --config each of them is a second
-answer to a question the config already answered, so each is refused BY NAME: a flag that
-is quietly ignored is the same lie as a config key that is quietly ignored (plan К2)."""
+"""Flags that place figures the BUILT-IN way, or name the printer and the output.
+
+Next to --config each of them is a second answer to a question the config already
+answered, so each is refused BY NAME: a flag that is quietly ignored is the same lie as a
+config key that is quietly ignored (plans К2 and Б0). The screen and the pixel are in
+this list too: with a config they come from ``[output] template`` and nowhere else."""
 
 PLATE_SUFFIXES = (".png", ".px6s")
 """A mask PNG or a printer file — nothing else: the suffix IS the choice of the output."""
@@ -401,13 +412,16 @@ def _refuse_layout_flags(args: argparse.Namespace) -> None:
 
 def _cmd_plate(args: argparse.Namespace) -> int:
     """The built-in plate, or the plate a TOML config asks for — one compose path."""
+    if args.config is not None:
+        return _plate_from_config(args)
+    if args.output is None:
+        raise Refusal("an output path is mandatory: -o out/plate.png (or a --config that "
+                      "names its own output in [output])")
     target = Path(args.output)
     suffix = target.suffix.lower()
     if suffix not in PLATE_SUFFIXES:
         raise Refusal(f"the output must end in .png (a mask) or .px6s (a printer file), "
                       f"got {target.name}")
-    if args.config is not None:
-        return _plate_from_config(args, target, suffix)
     if suffix == ".px6s":
         raise Refusal("a plate .px6s needs --config: the exposure time lives in "
                       "[plate] exposure_s, and the layout that produces the layer is the "
@@ -433,26 +447,25 @@ def _cmd_plate(args: argparse.Namespace) -> int:
     return _finish(args, screen, placements, report=report)
 
 
-def _plate_from_config(args: argparse.Namespace, target: Path, suffix: str) -> int:
-    """The plate a config asks for: the figures, the marker and the time — all from the file.
+def _plate_from_config(args: argparse.Namespace) -> int:
+    """The plate a config asks for: figures, marker, time, printer and outputs — all from it.
 
-    The report and the PNG carry the config TEXT whole: a month later the file alone does
-    not say what was exposed, and the mask does not say where the numbers came from.
+    ONE picture: `compose` runs once and BOTH files are written from it, because a PNG and
+    a .px6s of one plate drawn twice could differ by a pixel, and then nobody knows which
+    one was exposed. The report and the PNG chunk carry the config TEXT whole: a month
+    later the file alone does not say what was exposed.
     """
-    _refuse_layout_flags(args)
-    if args.exposure_s is not None:
-        raise Refusal("--exposure-s cannot be given with --config: the exposure time comes "
-                      "from [plate] exposure_s (one source of truth)")
+    _refuse_layout_flags(args)      # -o, --template, --screen-px, --pixel-um are in the list
     config = load_plate_config(args.config)
-    if suffix == ".px6s":
-        if config.exposure_s is None:
-            raise Refusal(f"{config.label}: [plate] has no 'exposure_s': a .px6s needs the "
-                          f"exposure time, and next to --config the flag is not an option")
-        if args.template is None:
-            raise Refusal("a .px6s needs --template: the machine blocks come from the real "
-                          "printer file, not from a guess")
-    printer = read_file(args.template) if args.template else None
-    screen, pixel_line = screen_for(args, printer)
+    if config.output.px6s is not None and config.exposure_s is None:
+        raise Refusal(f"{config.label}: [plate] has no 'exposure_s': "
+                      f"{config.output.px6s} needs the exposure time, and next to --config "
+                      f"the flag is not an option")
+    printer = read_file(config.output.template)
+    # The screen is the template's; the pixel may be MEASURED in [output] (rule of Г2) and
+    # then the geometry changes while the file header keeps the template's number.
+    flags = SimpleNamespace(screen_px=None, pixel_um=config.output.pixel_um)
+    screen, pixel_line = screen_for(flags, printer)
     placements, report = build_config_plate(screen, config)
     image, placed = compose(screen, placements, mirror=args.mirror, invert=args.invert)
     lines = (pixel_line, *report, *placed)
@@ -463,13 +476,22 @@ def _plate_from_config(args: argparse.Namespace, target: Path, suffix: str) -> i
     print(f"config, whole, as read from {config.label}:")
     for line in config.text.splitlines():
         print(f"  {line}")
-    if suffix == ".png":
-        written = write_mask(target, screen, lines, image, config_text=config.text)
-        print(f"Wrote {written}: {screen.width_px} x {screen.height_px} px mask")
-        return EXIT_OK
-    written, writer_lines = write_file(args.template, image, target, config.exposure_s)
-    print("\n".join(writer_lines))
-    print(f"Wrote {written}: {screen.width_px} x {screen.height_px} px layer")
+
+    png = config.output.png
+    if png is not None:
+        existed = png.exists()      # asked BEFORE the write: after it the answer is yes
+        written = write_mask(png, screen, lines, image, config_text=config.text)
+        print(f"{'overwrote' if existed else 'Wrote'} {written}: "
+              f"{screen.width_px} x {screen.height_px} px mask")
+    px6s = config.output.px6s
+    if px6s is not None:
+        existed = px6s.exists()
+        px6s.parent.mkdir(parents=True, exist_ok=True)
+        written, writer_lines = write_file(config.output.template, image, px6s,
+                                           config.exposure_s)
+        print("\n".join(writer_lines))
+        print(f"{'overwrote' if existed else 'Wrote'} {written}: "
+              f"{screen.width_px} x {screen.height_px} px layer")
     return EXIT_OK
 
 

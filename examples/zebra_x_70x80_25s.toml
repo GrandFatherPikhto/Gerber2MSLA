@@ -2,6 +2,10 @@
 # At 34 um a pixel, 0.2 mm is 6 px = 204 um; the pixel form keeps track and gap equal.
 # No marker: a zebra looks the same mirrored, and an F would cut into the stripes.
 
+[output]
+template = "../tests/data/01_test02.px6s"
+px6s = "../out/zebra_x_70x80_25s.px6s"
+
 [plate]
 width_mm = 70
 height_mm = 80

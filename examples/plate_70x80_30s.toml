@@ -2,6 +2,10 @@
 # Millimetres; origin at the plate's top-left corner. Widths in PIXELS: at 34 um a
 # millimetre request collapses (0.06 and 0.08 mm are both 2 px), the pixel form does not.
 
+[output]
+template = "../tests/data/01_test02.px6s"
+px6s = "../out/plate_70x80_30s.px6s"
+
 [plate]
 width_mm = 70
 height_mm = 80

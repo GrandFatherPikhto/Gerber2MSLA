@@ -10,6 +10,11 @@
 # millimetres: 94 px = 3.196 mm, 182 px = 6.188 mm, 1044 px = 35.496 mm. Rounded they
 # would move the figure by a pixel, and the oracle would stop being an oracle.
 
+[output]                       # everything about the printer: the file, and where to write
+template = "../tests/data/01_test02.px6s"   # the screen and the pixel come from HERE
+px6s = "../out/plate_70x78.px6s"
+png = "../out/plate_70x78.png"              # both files out of ONE picture
+
 [plate]
 width_mm = 70
 height_mm = 78

@@ -33,6 +33,7 @@ the same property, and the property "the refusal names the line" is what the cel
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -45,7 +46,15 @@ SCREEN = Screen(width_px=200, height_px=200, pixel_x_um=100.0, pixel_y_um=100.0)
 """20 x 20 mm at 100 um per pixel: 1 mm is exactly 10 px on BOTH axes, so a wrong axis
 shows as a wrong number and not as rounding noise. The plate is 16 x 16 mm = 160 px."""
 
-BASE = """
+OUTPUT = """
+[output]
+template = "t.px6s"
+px6s = "plate.px6s"
+"""
+"""The printer and the output (plan Б0). Required in every config, and — being about the
+printer rather than about the figures — not the subject of most cells below."""
+
+BASE = OUTPUT + """
 [plate]
 width_mm = 16
 height_mm = 16
@@ -67,21 +76,21 @@ GRID = BASE.replace(
     'kind = "grid"\nat_mm = [1, 1]\nsize_mm = [10, 10]\nline_mm = 0.2\n'
     'gap_mm = 0.2\ndirection = "both"')
 
-NO_FIGURES = """
+NO_FIGURES = OUTPUT + """
 [plate]
 width_mm = 16
 height_mm = 16
 """
 
 
-def _read(text: str):
-    return parse_plate_config(text, source="plate.toml")
+def _read(text: str, base: Path | None = None):
+    return parse_plate_config(text, source="plate.toml", base=base)
 
 
-def _message(text: str) -> str:
+def _message(text: str, base: Path | None = None) -> str:
     """The one line the operator gets; a refusal that is not one line is a defect."""
     with pytest.raises(Refusal) as caught:
-        _read(text)
+        _read(text, base)
     message = str(caught.value)
     assert "\n" not in message, "a refusal is ONE line"
     return message
@@ -132,7 +141,9 @@ def test_a_config_with_every_kind_is_read_into_specs():
 
 
 UNKNOWN_KEY_CELLS = [
-    ("root", "extra = 1\n" + BASE, "'extra'", "figure, marker, plate"),
+    ("root", "extra = 1\n" + BASE, "'extra'", "figure, marker, output, plate"),
+    ("output", _with_line(BASE, "px6s", 'px6s = "plate.px6s"\npixels = [1, 1]'),
+     "'pixels'", "the known keys are pixel_um, png, px6s, template"),
     ("plate", _with_line(BASE, "height_mm", "height_mm = 16\nwidht_mm = 8"),
      "'widht_mm'", "exposure_s, height_mm, width_mm"),
     ("marker", BASE.replace("[[figure]]", "[marker]\nat_mm = [1, 1]\nwidth_mm = 2\n\n"
@@ -156,6 +167,7 @@ def test_an_unknown_key_is_refused_with_its_name(level, text, named, known):
 
 
 MISSING_KEY_CELLS = [
+    ("template", _with_line(BASE, "template", ""), "template"),
     ("width_mm", NO_FIGURES.replace("width_mm = 16\n", ""), "width_mm"),
     ("height_mm", _with_line(BASE, "height_mm", ""), "height_mm"),
     ("size_mm", _with_line(BASE, "size_mm", ""), "size_mm"),
@@ -229,6 +241,60 @@ def test_a_syntax_error_names_the_line_of_the_file():
     broken = "[plate]\nwidth_mm = 16\nheight_mm = = 16\n"
     message = _message(broken)
     assert message.startswith("plate.toml: line 3:"), message
+
+
+# ───────────────────── the printer and the output (plan Б0) ─────────────────────
+
+PNG_ONLY = BASE.replace('px6s = "plate.px6s"', 'png = "plate.png"')
+
+
+def test_the_output_paths_count_from_the_config_directory(tmp_path):
+    """Relative paths are resolved against the config's own directory (plan Б0)."""
+    text = BASE.replace('"t.px6s"', '"templates/t.px6s"') \
+               .replace('"plate.px6s"', '"out/plate.px6s"')
+    config = _read(text, base=tmp_path)
+    assert config.output.template == tmp_path / "templates" / "t.px6s"
+    assert config.output.px6s == tmp_path / "out" / "plate.px6s"
+    assert config.output.png is None, "no png key, no png file"
+    assert config.output.pixel_um is None, "no measurement: the header's pixel is used"
+
+
+def test_an_output_with_only_a_png_is_legal():
+    """The PNG needs a screen too, so the template stays — and px6s may be absent."""
+    config = _read(PNG_ONLY)
+    assert config.output.png == Path("plate.png")
+    assert config.output.px6s is None
+    assert config.output.template == Path("t.px6s")
+
+
+def test_an_output_with_neither_px6s_nor_png_is_refused():
+    """A config that writes nothing does not say what it is for."""
+    assert "writes nothing" in _message(_with_line(BASE, "px6s", ""))
+
+
+def test_pixel_um_in_the_output_is_a_measurement_of_two_numbers():
+    """It is not a default: absent means "the template header's pixel", which is named."""
+    config = _read(_with_line(BASE, "template",
+                              'template = "t.px6s"\npixel_um = [34.0, 30.0]'))
+    assert config.output.pixel_um == (34.0, 30.0)
+
+
+def test_a_bad_pixel_um_is_refused_with_its_axis():
+    message = _message(_with_line(BASE, "template",
+                                  'template = "t.px6s"\npixel_um = [0, 34]'))
+    assert "'pixel_um[0]'" in message and "must be positive" in message
+
+
+def test_load_refuses_a_missing_template_with_its_key_and_path(tmp_path):
+    """The template is an INPUT: `load` checks it exists and names the key and the path."""
+    config_file = tmp_path / "plate.toml"
+    config_file.write_text(BASE)
+    with pytest.raises(Refusal) as caught:
+        load_plate_config(config_file)
+    message = str(caught.value)
+    assert "'template'" in message
+    assert str(tmp_path / "t.px6s") in message
+    assert "no such file exists" in message
 
 
 def test_a_config_file_that_cannot_be_read_is_refused(tmp_path):

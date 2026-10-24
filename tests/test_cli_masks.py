@@ -117,43 +117,178 @@ def test_plate_mm_reaches_the_layout(tmp_path, capsys):
     assert "plate: 20.000 x 16.000 mm" in capsys.readouterr().out
 
 
-# ───────────────────── plate from a config (plan К2) ──────────────────────
+# ────────────── plate from a config: the output lives in [output] (К2, Б0) ─────────────
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 TEMPLATE = ROOT / "tests" / "data" / "01_test02.px6s"
 SCREEN_ARGS = ("--screen-px", "5760x3600", "--pixel-um", "34x34")
-"""The real printer screen: the oracle is about PIXELS, so it runs on the real numbers."""
+"""The real printer screen, for the BUILT-IN path and the oracle: pixels, not millimetres."""
+
+SQUARE_BODY = ('[plate]\nwidth_mm = 20\nheight_mm = 16\nexposure_s = 25\n\n'
+               '[[figure]]\nkind = "square"\nat_mm = [1, 1]\nsize_mm = [18, 14]\n'
+               'line_px = 6\n')
 
 
-def _example(name: str) -> str:
-    return str(EXAMPLES / name)
+def _config(tmp_path: Path, body: str = SQUARE_BODY, *, name: str = "plate.toml",
+            template: str | None = None, pixel_um: str | None = None,
+            px6s: str | None = "plate.px6s", png: str | None = None) -> Path:
+    """A config whose [output] writes INTO tmp_path; its paths are relative to the file."""
+    lines = ["[output]", f'template = "{TEMPLATE if template is None else template}"']
+    if pixel_um is not None:
+        lines.append(f"pixel_um = {pixel_um}")
+    if px6s is not None:
+        lines.append(f'px6s = "{px6s}"')
+    if png is not None:
+        lines.append(f'png = "{png}"')
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n\n" + body, encoding="utf-8")
+    return path
 
+
+def _run_config(tmp_path: Path, body: str = SQUARE_BODY, **kwargs) -> None:
+    """`masks plate --config` with no -o: the output is the config's business (plan Б0)."""
+    config = _config(tmp_path, body, **kwargs)
+    assert main(["masks", "plate", "--config", str(config)]) == 0
+
+
+def _example_in(tmp_path: Path, name: str) -> Path:
+    """The example config with its [output] paths redirected into tmp_path.
+
+    The example itself writes to `../out/` — that is its job; a cell must not leave files
+    in the repository, and `-o` can no longer redirect it (plan Б0).
+    """
+    text = (EXAMPLES / name).read_text(encoding="utf-8")
+    text = text.replace('"../tests/data/01_test02.px6s"', f'"{TEMPLATE}"')
+    text = text.replace('"../out/', f'"{tmp_path}/')
+    target = tmp_path / name
+    target.write_text(text, encoding="utf-8")
+    return target
+
+
+# ───────────────────────────────── the oracle ─────────────────────────────────
 
 def test_the_example_reproduces_the_built_in_plate_pixel_for_pixel(tmp_path, capsys):
     """The config says what the code draws: same pixels; only the text chunks differ."""
     built_in = pixels(run_mask(tmp_path, "plate", *SCREEN_ARGS, name="built_in.png"))
-    from_config = pixels(run_mask(tmp_path, "plate", "--config",
-                                 _example("plate_70x78.toml"), *SCREEN_ARGS,
-                                 name="from_config.png"))
+    config = _example_in(tmp_path, "plate_70x78.toml")
+    assert main(["masks", "plate", "--config", str(config)]) == 0
     capsys.readouterr()
-    assert np.array_equal(built_in, from_config), \
+    assert np.array_equal(built_in, pixels(tmp_path / "plate_70x78.png")), \
         "the example IS the built-in plate; if this fails, one of the two is wrong"
 
 
+# ─────────────────────────── [output]: where and what ───────────────────────────
+
+def test_the_output_paths_count_from_the_config_file(tmp_path, monkeypatch, capsys):
+    """A config moved next to its Gerbers cannot be broken by a `cd` (plan Б0)."""
+    config = _config(tmp_path / "cfg", px6s="deep/plate.px6s")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert main(["masks", "plate", "--config", str(config)]) == 0
+    written = tmp_path / "cfg" / "deep" / "plate.px6s"
+    assert written.exists(), "the directory from the config was created, not the cwd"
+    assert f"Wrote {written}" in capsys.readouterr().out
+
+
+def test_a_config_can_write_only_a_png(tmp_path, capsys):
+    """`png` without `px6s` is a plate to look at, not to expose."""
+    _run_config(tmp_path, png="only.png", px6s=None)
+    assert (tmp_path / "only.png").exists()
+    assert not (tmp_path / "plate.px6s").exists(), "no .px6s was asked for"
+    assert "px mask" in capsys.readouterr().out
+
+
+def test_a_config_can_write_only_the_px6s(tmp_path, capsys):
+    """The other way round: a printer file and no PNG."""
+    _run_config(tmp_path, px6s="only.px6s", png=None)
+    assert (tmp_path / "only.px6s").exists()
+    assert not (tmp_path / "only.png").exists()
+    assert "px layer" in capsys.readouterr().out
+
+
+def test_both_files_come_out_of_one_picture(tmp_path, capsys):
+    """ONE `compose`, two files: drawn twice they could differ by a pixel (plan Б0)."""
+    _run_config(tmp_path, px6s="both.px6s", png="both.png")
+    capsys.readouterr()
+    png_array = pixels(tmp_path / "both.png")
+    layer = np.array(read_file(tmp_path / "both.px6s").layer_image(0))
+    assert np.array_equal(png_array, layer), \
+        "the PNG and the layer of one call are one picture, not two"
+
+
+def test_an_output_with_neither_px6s_nor_png_is_refused(tmp_path, capsys):
+    """A config that writes nothing does not say what it is for."""
+    config = _config(tmp_path, px6s=None, png=None)
+    assert main(["masks", "plate", "--config", str(config)]) == 2
+    assert "writes nothing" in capsys.readouterr().err
+
+
+def test_a_missing_template_file_is_refused_with_its_key_and_path(tmp_path, capsys):
+    config = _config(tmp_path, template=str(tmp_path / "absent.px6s"))
+    assert main(["masks", "plate", "--config", str(config)]) == 2
+    err = capsys.readouterr().err
+    assert "'template'" in err and "absent.px6s" in err
+
+
+@pytest.mark.parametrize("flags", [
+    ("-o", "x.png"), ("--template", "t.px6s"), ("--screen-px", "100x100"),
+    ("--pixel-um", "34x34"), ("--exposure-s", "20"),
+    ("--plate-mm", "70x78"), ("--at", "2,2"), ("--widths-mm", "0.2"), ("--lines", "3"),
+    ("--grid-mm", "30x30"), ("--direction", "both"), ("--margin-mm", "2"),
+    ("--square-line-mm", "0.2"), ("--line-mm", "0.2"), ("--gap-mm", "0.2"),
+], ids=lambda flags: flags[0])
+def test_a_flag_next_to_the_config_is_refused_by_name(tmp_path, capsys, flags):
+    """Everything about the printer and the output is in [output]: a flag is a second
+    answer, and a flag that is quietly ignored is the same lie as a quietly ignored key."""
+    config = _config(tmp_path)
+    code = main(["masks", "plate", "--config", str(config), *flags])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert flags[0] in err and "--config" in err
+    assert not (tmp_path / "plate.px6s").exists(), "nothing is written on a refusal"
+
+
+def test_an_overwrite_says_overwrote(tmp_path, capsys):
+    """A generated file is written again every time; the report must not pretend it is new."""
+    config = _config(tmp_path)
+    assert main(["masks", "plate", "--config", str(config)]) == 0
+    assert "Wrote" in capsys.readouterr().out
+    assert main(["masks", "plate", "--config", str(config)]) == 0
+    assert "overwrote" in capsys.readouterr().out
+
+
+def test_pixel_um_changes_the_geometry_and_leaves_the_header_alone(tmp_path, capsys):
+    """A MEASUREMENT, as in Г2: the drawing follows it, the file header keeps the template's."""
+    _run_config(tmp_path, name="plain.toml", px6s="plain.px6s")
+    plain = read_file(tmp_path / "plain.px6s")
+    plain_report = capsys.readouterr().out
+    _run_config(tmp_path, name="measured.toml", px6s="measured.px6s",
+                pixel_um="[34.0, 30.0]")
+    measured = read_file(tmp_path / "measured.px6s")
+    measured_report = capsys.readouterr().out
+    assert measured.header.pixel_size_um == 34.0, \
+        "the header is the template's, whatever was measured"
+    assert "measured, --pixel-um; the file header keeps 34.00" in measured_report
+    assert "template header" in plain_report
+    assert not np.array_equal(np.array(plain.layer_image(0)),
+                              np.array(measured.layer_image(0))), \
+        "a 34 x 30 um pixel draws the same plate with a different geometry"
+
+
+# ───────────────────────────── the config as a record ─────────────────────────────
+
 def test_the_config_lands_in_its_own_utf8_chunk_whole(tmp_path):
     """Russian comments are the operator's: the chunk is iTXt, and it reads back equal."""
-    config = tmp_path / "plate.toml"
-    text = ("# комментарий по-русски: пластина тестовая\n"
-            "[plate]\nwidth_mm = 20\nheight_mm = 16\n\n"
-            "[[figure]]\nkind = \"square\"\nat_mm = [1, 1]\nsize_mm = [18, 14]\n"
-            "line_px = 6\n")
-    config.write_text(text, encoding="utf-8")
-    target = run_mask(tmp_path, "plate", "--config", str(config),
-                      "--screen-px", "1200x900", "--pixel-um", "34.4x34.4",
-                      name="config.png")
-    with Image.open(target) as image:
-        assert image.text["plate_config"] == text, "byte for byte, comments and all"
+    text = ("# комментарий по-русски: пластина тестовая\n" + SQUARE_BODY)
+    config = _config(tmp_path, body="", png="config.png")
+    config.write_text(config.read_text(encoding="utf-8") + text, encoding="utf-8")
+    assert main(["masks", "plate", "--config", str(config)]) == 0
+    with Image.open(tmp_path / "config.png") as image:
+        assert image.text["plate_config"] == config.read_text(encoding="utf-8"), \
+            "byte for byte, comments and all"
         assert "msla_tests" in image.text, "the report chunk is still there"
         assert "width_mm = 20" not in image.text["msla_tests"], \
             "the config body has its own chunk; it is not doubled into the report"
@@ -161,52 +296,19 @@ def test_the_config_lands_in_its_own_utf8_chunk_whole(tmp_path):
 
 def test_the_px6s_takes_its_time_from_the_config(tmp_path, capsys):
     """`[plate] exposure_s` is the one source of truth: both fields, one bottom layer."""
-    target = tmp_path / "plate.px6s"
-    assert main(["masks", "plate", "--config", _example("plate_70x78.toml"),
-                 "--template", str(TEMPLATE), "-o", str(target)]) == 0
-    header = read_file(target).header
+    _run_config(tmp_path)
+    header = read_file(tmp_path / "plate.px6s").header
     assert header.exposure_s == 25.0, "the normal time"
     assert header.bottom_exposure_s == 25.0, "and the bottom one: layer 0 IS the bottom"
     assert header.bottom_layers == 1
     assert "exposure: 25 s from [plate] exposure_s" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("flags", [
-    ("--plate-mm", "70x78"), ("--at", "2,2"), ("--widths-mm", "0.2"), ("--lines", "3"),
-    ("--grid-mm", "30x30"), ("--direction", "both"), ("--margin-mm", "2"),
-    ("--square-line-mm", "0.2"), ("--line-mm", "0.2"), ("--gap-mm", "0.2"),
-], ids=lambda flags: flags[0])
-def test_a_built_in_layout_flag_next_to_the_config_is_refused_by_name(tmp_path, capsys,
-                                                                     flags):
-    """The config says what lies where: a second answer is refused, never ignored."""
-    target = tmp_path / "plate.png"
-    code = main(["masks", "plate", "--config", _example("plate_70x78.toml"),
-                 *flags, *SCREEN_ARGS, "-o", str(target)])
-    assert code == 2
-    err = capsys.readouterr().err
-    assert flags[0] in err and "--config" in err
-    assert not target.exists()
-
-
-def test_a_second_exposure_time_in_the_flags_is_refused(tmp_path, capsys):
-    """One source of truth: the flag and `[plate] exposure_s` cannot both name the time."""
-    code = main(["masks", "plate", "--config", _example("plate_70x78.toml"),
-                 "--exposure-s", "20", "--template", str(TEMPLATE),
-                 "-o", str(tmp_path / "plate.px6s")])
-    assert code == 2
-    err = capsys.readouterr().err
-    assert "--exposure-s" in err and "one source of truth" in err
-
-
 def test_a_px6s_without_the_time_in_the_config_is_refused_with_the_key(tmp_path, capsys):
     """The refusal names the KEY that is missing, not just the file."""
-    config = tmp_path / "notime.toml"
-    config.write_text("[plate]\nwidth_mm = 20\nheight_mm = 16\n\n[[figure]]\n"
-                      "kind = \"square\"\nat_mm = [1, 1]\nsize_mm = [18, 14]\n"
-                      "line_px = 6\n", encoding="utf-8")
-    code = main(["masks", "plate", "--config", str(config), "--template", str(TEMPLATE),
-                 "-o", str(tmp_path / "plate.px6s")])
-    assert code == 2
+    body = SQUARE_BODY.replace("exposure_s = 25\n", "")
+    config = _config(tmp_path, body)
+    assert main(["masks", "plate", "--config", str(config)]) == 2
     assert "'exposure_s'" in capsys.readouterr().err
 
 
@@ -217,15 +319,18 @@ def test_a_plate_px6s_needs_the_config(tmp_path, capsys):
     assert "needs --config" in capsys.readouterr().err
 
 
+def test_an_output_path_without_a_config_is_mandatory(tmp_path, capsys):
+    """`-o` is no longer an argparse requirement, so it has its own one-line refusal."""
+    code = main(["masks", "plate", *SCREEN_ARGS])
+    assert code == 2
+    assert "output path is mandatory" in capsys.readouterr().err
+
+
 def test_a_broken_config_is_one_line_and_code_two(tmp_path, capsys):
     """The one-line refusal of the whole utility, not a traceback from tomllib."""
-    config = tmp_path / "typo.toml"
-    config.write_text("[plate]\nwidth_mm = 70\nwidht_mm = 78\n\n[[figure]]\n"
-                      "kind = \"square\"\nat_mm = [1, 1]\nsize_mm = [18, 14]\n"
-                      "line_px = 6\n", encoding="utf-8")
-    code = main(["masks", "plate", "--config", str(config), *SCREEN_ARGS,
-                 "-o", str(tmp_path / "plate.png")])
-    assert code == 2
+    body = SQUARE_BODY.replace("height_mm = 16", "widht_mm = 16")
+    config = _config(tmp_path, body)
+    assert main(["masks", "plate", "--config", str(config)]) == 2
     err = capsys.readouterr().err.strip()
     assert "\n" not in err, f"a refusal is ONE line, got: {err!r}"
     assert "'widht_mm'" in err
@@ -233,8 +338,8 @@ def test_a_broken_config_is_one_line_and_code_two(tmp_path, capsys):
 
 def test_the_report_names_the_plate_the_figures_and_the_time(tmp_path, capsys):
     """The report is the operator's table: where each figure lies, in mm and in px."""
-    run_mask(tmp_path, "plate", "--config", _example("plate_70x78_patches.toml"),
-             *SCREEN_ARGS, name="patches.png")
+    config = _example_in(tmp_path, "plate_70x78_patches.toml")
+    assert main(["masks", "plate", "--config", str(config)]) == 0
     out = capsys.readouterr().out
     assert "plate: 70.000 x 78.000 mm" in out
     assert "centred on the 5760 x 3600 px screen" in out
@@ -247,8 +352,8 @@ def test_the_report_names_the_plate_the_figures_and_the_time(tmp_path, capsys):
 
 def test_the_patches_example_builds_with_its_rows_in_the_order_written(tmp_path, capsys):
     """The second example is a real plate: four rows, 0.05 mm at the top, 0.20 at the bottom."""
-    run_mask(tmp_path, "plate", "--config", _example("plate_70x78_patches.toml"),
-             *SCREEN_ARGS, name="patches_rows.png")
+    config = _example_in(tmp_path, "plate_70x78_patches.toml")
+    assert main(["masks", "plate", "--config", str(config)]) == 0
     out = capsys.readouterr().out
     assert "pattern: patches, 4 rows" in out
     assert "row 1: 0.050 mm" in out and "row 4: 0.200 mm" in out

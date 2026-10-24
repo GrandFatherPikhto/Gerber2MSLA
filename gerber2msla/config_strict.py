@@ -32,6 +32,7 @@ THE RULES, once, for both configs:
 from __future__ import annotations
 
 import math
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -176,6 +177,27 @@ def _loads(text: str, source: str) -> dict:
         where = f"line {line}" if line else "a TOML syntax error"
         raise Refusal(f"{source}: {where}: {message}") from None
     return _table(data, "the whole file", source)
+
+
+def _resolve(value: str, base: Path | None) -> Path:
+    """A path from a config: relative ones count from the CONFIG's own directory.
+
+    That is the whole point of a config file: it can be moved next to the Gerbers it
+    talks about, and a `cd` cannot break it. An absolute path is taken as it is.
+    """
+    target = Path(value)
+    if target.is_absolute() or base is None:
+        return target
+    # normpath, not resolve: the report should read `out/plate.px6s`, not
+    # `examples/../out/plate.px6s` — and the answer stays relative, which the cells check.
+    return Path(os.path.normpath(base / target))
+
+
+def _must_exist(target: Path, key: str, where: str, source: str) -> None:
+    """A missing input file is refused with the KEY that points at it and the path."""
+    if not target.exists():
+        raise Refusal(f"{source}: {where}: '{key}' points to {target}, and no such file "
+                      f"exists (paths count from the config's own directory)")
 
 
 def _read_text(target: Path, what: str) -> str:
