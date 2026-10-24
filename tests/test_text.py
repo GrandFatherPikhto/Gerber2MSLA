@@ -4,7 +4,8 @@ Cells closed here — what the font and the figure PROMISE:
 
     шрифт        все глифы попарно различны; у несимметричных (F, L, R, 2, 5, 7, s) картинка
                  не равна своему fliplr и своему flipud — иначе перевёрнутая пластина
-                 читалась бы как правильная
+                 читалась бы как правильная; у F перекладина сверху, у L — снизу, поэтому
+                 глиф, перевёрнутый в таблице, врать не может
     сетка        "25s" при stroke_px = 6 — ровно (6·3 − 1)·6 = 102 px на 7·6 = 42 px
     промежуток   между буквами один пустой ЗНАК = 6 px чёрного, и он чёрный
     неквадрат    точка шрифта — квадрат в ПИКСЕЛЯХ: на пикселе 34 x 30 мкм картинка та же
@@ -97,6 +98,26 @@ def test_an_asymmetric_character_differs_from_its_reflections(character):
     bits = _bits(character)
     assert not np.array_equal(bits, np.fliplr(bits)), "a mirrored label must read mirrored"
     assert not np.array_equal(bits, np.flipud(bits)), "a label turned over must read so"
+
+
+def _ink_by_half(character: str) -> tuple[int, int]:
+    """Lit dots in the TOP three rows and in the BOTTOM three: where the letter's bars are."""
+    bits = _bits(character)
+    return int(bits[:3].sum()), int(bits[-3:].sum())
+
+
+@pytest.mark.parametrize("character, where", [("F", "top"), ("L", "bottom")])
+def test_the_letters_that_say_which_way_is_up(character, where):
+    """F's bar is at the top and L's at the bottom; a turned-over glyph would lie.
+
+    This is not a second copy of the table: it is the property the plate is READ by. The
+    marker of every mask in this utility is a letter F, and the whole point of it is that
+    a mirrored or turned-over plate shows a letter that is wrong — which only works if the
+    letter keeps its bar on the side the letter has it.
+    """
+    top, bottom = _ink_by_half(character)
+    assert (top > bottom) if where == "top" else (bottom > top), \
+        f"{character} must be heavier at its {where}: a turned-over glyph misleads"
 
 
 def test_the_font_is_five_by_seven_and_holds_the_agreed_set():
