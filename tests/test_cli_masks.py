@@ -373,26 +373,6 @@ def test_the_patches_example_builds_with_its_rows_in_the_order_written(tmp_path,
     assert "row 1: 0.050 mm" in out and "row 4: 0.200 mm" in out
 
 
-@pytest.mark.parametrize("name, label", [
-    ("plate_70x80_20s.toml", "20s"),
-    ("plate_70x80_25s.toml", "25s"),
-    ("plate_70x80_30s.toml", "30s"),
-])
-def test_every_time_plate_carries_its_own_label(tmp_path, capsys, name, label):
-    """Each plate of the series says its own exposure time in the plate's own font (Т1).
-
-    The label comes from `{exposure_s}`, not from a second copy of the number in the file
-    (25.10: a copied config kept saying "25s" after the time was changed to 7 s).
-    """
-    config = _example_in(tmp_path, name)
-    assert 'text = "{exposure_s}s"' in config.read_text(encoding="utf-8"), \
-        "the example must ask for the plate's own time, not repeat it"
-    assert main(["masks", "plate", "--config", str(config)]) == 0
-    out = capsys.readouterr().out
-    assert f"pattern: text {label!r}" in out
-    assert "drawn: 102 x 42 px = 3.468 x 1.428 mm" in out
-    written = tmp_path / f"{name.removesuffix('.toml')}.px6s"
-    assert written.is_file(), f"the label's plate was not written: {written}"
 
 
 def test_a_quarter_turn_puts_the_plate_on_its_side(tmp_path, capsys):
@@ -404,3 +384,66 @@ def test_a_quarter_turn_puts_the_plate_on_its_side(tmp_path, capsys):
             "counter-clockwise to 2353 x 2059 px, centred on the 5760 x 3600 px screen at "
             "1703, 770 px") in out
     assert "pattern: text '20s'" in out, "the label is turned with the plate"
+
+
+SERIES_TIMES = ("7", "10", "15", "20", "25", "30", "35", "45")
+
+
+def test_the_series_example_writes_one_file_per_time(tmp_path, capsys):
+    """One config, eight files — its own time, its own label, its own name (25.10).
+
+    The label comes from `{exposure_s}`, not from a second copy of the number in the file
+    (25.10: a copied config kept saying "25s" after the time was changed to 7 s). None of
+    the single-time copies of the operator is read here: one series config is the whole
+    subject, so his files may be edited or deleted without breaking this cell.
+    """
+    config = _example_in(tmp_path, "plate_70x80_series.toml")
+    assert 'text = "{exposure_s}s"' in config.read_text(encoding="utf-8"), \
+        "the example must ask for the plate's own time, not repeat it"
+    assert main(["masks", "plate", "--config", str(config)]) == 0
+    out = capsys.readouterr().out
+    for seconds in SERIES_TIMES:
+        written = tmp_path / f"plate_70x80_{seconds}s.px6s"
+        assert written.is_file(), f"no file for {seconds} s"
+        assert read_file(written).header.exposure_s == pytest.approx(float(seconds))
+        assert f"pattern: text '{seconds}s'" in out, f"its own label for {seconds} s"
+        assert f" {written}: 5760 x 3600 px layer, {seconds} s" in out, \
+            f"its own line in the report for {seconds} s"
+    assert "series: 8 time(s), 8 file(s), one per time" in out
+
+
+def test_a_series_file_equals_the_same_config_with_one_time(tmp_path, capsys):
+    """The oracle: 20 s of the series is BYTE FOR BYTE 20 s of the same config alone.
+
+    The single-time text is made from the SERIES text by hand, so the cell reads no file of
+    the operator's: the only difference between the two configs is the list, and that is
+    exactly what must not reach the pixels.
+    """
+    text = (EXAMPLES / "plate_70x80_series.toml").read_text(encoding="utf-8")
+    text = text.replace('"../tests/data/01_test02.px6s"', f'"{TEMPLATE}"')
+    text = text.replace('"../out/', f'"{tmp_path}/')
+    series = tmp_path / "series.toml"
+    series.write_text(text, encoding="utf-8")
+    single = tmp_path / "single.toml"
+    single.write_text(
+        text.replace("exposure_s = [7, 10, 15, 20, 25, 30, 35, 45]", "exposure_s = 20")
+            .replace("plate_70x80_{exposure_s}s.px6s", "plate_alone.px6s"),
+        encoding="utf-8")
+
+    assert main(["masks", "plate", "--config", str(series)]) == 0
+    assert main(["masks", "plate", "--config", str(single)]) == 0
+    capsys.readouterr()
+    assert (tmp_path / "plate_70x80_20s.px6s").read_bytes() == \
+        (tmp_path / "plate_alone.px6s").read_bytes(), \
+        "a series adds nothing to a file: it only names the time"
+
+
+def test_a_series_without_the_time_in_its_path_is_one_line_and_code_two(tmp_path, capsys):
+    """Without `{exposure_s}` every file of the series would land on the same name."""
+    body = SQUARE_BODY.replace("exposure_s = 25", "exposure_s = [7, 10]")
+    config = _config(tmp_path, body, px6s="plate.px6s")
+    assert main(["masks", "plate", "--config", str(config)]) == 2
+    err = capsys.readouterr().err.strip()
+    assert "\n" not in err, f"a refusal is ONE line, got: {err!r}"
+    assert "'px6s' has no {exposure_s}" in err
+    assert "overwrite each other" in err

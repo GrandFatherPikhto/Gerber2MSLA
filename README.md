@@ -101,6 +101,7 @@ png = "../out/plate_70x80_25s.png"          # optional; at least one of px6s / p
 width_mm = 70
 height_mm = 78
 exposure_s = 25                  # for a .px6s; both times come from here
+# exposure_s = [7, 10, 15, 20, 25, 30, 35, 45]   # a LIST: one file per time (a series)
 # rotate = 90                    # optional: turn the finished plate counter-clockwise
 
 [marker]                         # optional: no [marker] means no letter F
@@ -151,6 +152,19 @@ stroke_px = 6                    # one font dot = 6 x 6 SCREEN pixels
   shows), the right one stripes along Y (the X resolution). A stripe is drawn whole and
   the first is flush with the near edge — the leftover at the far edge is a gap, because
   a stretched stripe would measure a width nobody asked for.
+* **A LIST of times is a series** (25.10: the operator used to copy one config per time and
+  change a single number): `exposure_s = [7, 10, 15, 20, 25, 30, 35, 45]` writes one file per
+  time, in the order of the list — its own label (`{exposure_s}`), its own name, its own
+  line in the report. Every `[output]` path (`px6s` AND `png`) must carry `{exposure_s}`,
+  otherwise the config is refused: the files would overwrite each other. A time given twice
+  is refused too. One command does the whole series:
+
+  ```sh
+  .venv/bin/gerber2msla masks plate --config examples/plate_70x80_series.toml
+  ```
+
+  The 20, 25 and 30 s files of that series are byte for byte the files of the single
+  configs — a series changes nothing but the names.
 * **`text` is the utility's OWN 5 x 7 font** ([`font5x7.py`](gerber2msla/font5x7.py)),
   not a TTF: a vector font is rasterised by the platform, comes out grey and slightly
   different machine to machine, and the plates of one series are compared with a

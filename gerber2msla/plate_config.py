@@ -80,6 +80,8 @@ added to the reader and forgotten in the message, or the other way round.
 """
 
 PLATE_KEYS = ("exposure_s", "height_mm", "rotate", "width_mm")
+SERIES_KEYS = ("png", "px6s")
+"""The output paths a SERIES must name the time in: one file per time, or one file total."""
 ROTATIONS = (0, 90, 180, 270)
 """A quarter, half or three-quarter turn, COUNTER-clockwise about the plate's centre.
 
@@ -201,7 +203,13 @@ class PlateConfig:
 
     width_mm: float
     height_mm: float
-    exposure_s: float | None
+    exposure_s: tuple[float, ...] | None
+    """The times of the series, in the order of the file: one plate per time.
+
+    ``None`` is "no `[plate] exposure_s` at all"; one number is a tuple of one. A LIST is a
+    series (Denis, 25.10: the copies of one config that differ by a single number), and a
+    series writes one file per time — its output paths must name the time.
+    """
     marker_at_mm: tuple[float, float] | None
     figures: tuple[FigureSpec, ...]
     output: PlateOutput
@@ -214,6 +222,11 @@ class PlateConfig:
     @property
     def label(self) -> str:
         return "<config>" if self.path is None else str(self.path)
+
+    @property
+    def times(self) -> tuple[float | None, ...]:
+        """One entry per file to write: a config without the key answers ``(None,)``."""
+        return (None,) if self.exposure_s is None else self.exposure_s
 
 
 # ───────────────────────────── refusal wording ─────────────────────────────
@@ -284,6 +297,32 @@ def _widths(table: dict, where: str, source: str) -> tuple[Width, ...]:
     return tuple(make(number) for number in _range(key, value, where, source, pixel=pixel))
 
 
+def _times(table: dict, where: str, source: str) -> tuple[float, ...] | None:
+    """``[plate] exposure_s``: one number, or a LIST of them — one plate per time.
+
+    The order is the operator's and is kept. A time given twice is a refusal: two files of
+    one series would fight for one name, and the second would quietly win.
+    """
+    if "exposure_s" not in table:
+        return None
+    value = table["exposure_s"]
+    if type(value) is not list:
+        return (_number(value, "exposure_s", where, source),)
+    if not value:
+        raise Refusal(f"{source}: {where}: 'exposure_s' is an empty array: a series needs "
+                      f"at least one time (a single plate is one number)")
+    times = tuple(_number(item, f"exposure_s[{index}]", where, source)
+                  for index, item in enumerate(value))
+    seen: dict[float, int] = {}
+    for index, seconds in enumerate(times, start=1):
+        if seconds in seen:
+            raise Refusal(f"{source}: {where}: 'exposure_s' holds {seconds:g} twice (times "
+                          f"{seen[seconds]} and {index}): the two files of one series would "
+                          f"fight for one name")
+        seen[seconds] = index
+    return times
+
+
 def _rotation(table: dict, where: str, source: str) -> int:
     """``[plate] rotate``: a quarter turn, and nothing else. Absent means 0."""
     if "rotate" not in table:
@@ -295,11 +334,12 @@ def _rotation(table: dict, where: str, source: str) -> int:
     return value
 
 
-def _placeholders(text: str, where: str, source: str) -> None:
-    """Only ``{exposure_s}`` may stand in the label, exactly once; any other brace is a typo.
+def _placeholders(text: str, where: str, source: str, key: str = "text") -> None:
+    """Only ``{exposure_s}`` may stand in a string, exactly once; any other brace is a typo.
 
     The character number is what the operator needs: a Cyrillic "с" inside a brace looks
-    like a substitution to the eye, and "line 12 of your config" is the only useful answer.
+    like a substitution to the eye, and "character 4 of 'text'" is the only useful answer.
+    The same rule guards a label and the output path of a series — one reader, one wording.
     """
     index = 0
     seen = 0
@@ -309,15 +349,15 @@ def _placeholders(text: str, where: str, source: str) -> None:
             if text.startswith(TEXT_PLACEHOLDER, index):
                 seen += 1
                 if seen > 1:
-                    raise Refusal(f"{source}: {where}: 'text' holds {TEXT_PLACEHOLDER} "
+                    raise Refusal(f"{source}: {where}: '{key}' holds {TEXT_PLACEHOLDER} "
                                   f"twice: one substitution is allowed, because the plate "
                                   f"has one exposure time")
                 index += len(TEXT_PLACEHOLDER)
                 continue
-            raise Refusal(f"{source}: {where}: character {index + 1} of 'text' is "
+            raise Refusal(f"{source}: {where}: character {index + 1} of '{key}' is "
                           f"{character!r}: the only substitution is "
                           f"{TEXT_PLACEHOLDER!r}, and any other brace is a typo, not a "
-                          f"label")
+                          f"name")
         index += 1
 
 
@@ -333,6 +373,21 @@ def fill_text(text: str, exposure_s: float | None, *, source: str = "the config"
         raise Refusal(f"{source}: the label {text!r} asks for {TEXT_PLACEHOLDER} and "
                       f"[plate] has no 'exposure_s': there is no time to write in it")
     return text.replace(TEXT_PLACEHOLDER, f"{exposure_s:g}")
+
+
+def fill_path(path: Path, exposure_s: float | None) -> Path:
+    """One output path of a series: the time is written into the NAME, as in a label.
+
+    A path without the placeholder is returned untouched (a single plate needs no time in
+    its name); a path WITH it and no time to put there is a refusal, never a literal
+    directory called ``{exposure_s}``.
+    """
+    if TEXT_PLACEHOLDER not in str(path):
+        return path
+    if exposure_s is None:
+        raise Refusal(f"the output path {str(path)!r} asks for {TEXT_PLACEHOLDER} and the "
+                      f"config has no exposure time to write in it")
+    return Path(str(path).replace(TEXT_PLACEHOLDER, f"{exposure_s:g}"))
 
 
 def _patch_gap(table: dict, where: str, source: str) -> Width | None:
@@ -412,12 +467,31 @@ def _figure(table: object, index: int, source: str) -> FigureSpec:
 
 # ──────────────────────────────── reading ──────────────────────────────────
 
-def _output(data: dict, source: str, base: Path | None) -> PlateOutput:
+def _series_output(table: dict, key: str, where: str, source: str, base: Path | None,
+                   series: bool) -> Path | None:
+    """One output path; a SERIES must name the time in it, or the files overwrite each other."""
+    if key not in table:
+        return None
+    raw = _text(table[key], key, where, source)
+    if series:
+        # The brace first: `{expo}` is a typo with a PLACE, and saying so is more useful
+        # than "there is no {exposure_s}" about a string that has a brace in it.
+        _placeholders(raw, where, source, key)
+        if TEXT_PLACEHOLDER not in raw:
+            raise Refusal(f"{source}: {where}: '{key}' has no {TEXT_PLACEHOLDER}: a series "
+                          f"writes one file per time, and without the time in the name "
+                          f"they would overwrite each other (got {raw!r})")
+    return _resolve(raw, base)
+
+
+def _output(data: dict, source: str, base: Path | None,
+            *, series: bool = False) -> PlateOutput:
     """The ``[output]`` table: the printer's file, the optional measurement, the paths.
 
-    Both paths are optional, but not both absent: a config that writes nothing is a
-    config that does not say what it is for — and next to ``--config`` there is no ``-o``
-    to fall back on.
+    Both paths are optional, but not both absent: a config that writes nothing is a config
+    that does not say what it is for — and next to ``--config`` there is no ``-o`` to fall
+    back on. ``series`` says the config writes one file per time, so each path it gives must
+    carry that time in its name.
     """
     table = _table(_required(data, "output", "the top level", source), "the [output] table",
                    source)
@@ -427,12 +501,8 @@ def _output(data: dict, source: str, base: Path | None) -> PlateOutput:
     pixel_um = None
     if "pixel_um" in table:
         pixel_um = _pair(table["pixel_um"], "pixel_um", "[output]", source)
-    px6s = None
-    if "px6s" in table:
-        px6s = _resolve(_text(table["px6s"], "px6s", "[output]", source), base)
-    png = None
-    if "png" in table:
-        png = _resolve(_text(table["png"], "png", "[output]", source), base)
+    px6s = _series_output(table, "px6s", "[output]", source, base, series)
+    png = _series_output(table, "png", "[output]", source, base, series)
     if px6s is None and png is None:
         raise Refusal(f"{source}: [output]: no 'px6s' and no 'png': the config writes "
                       f"nothing (there is no -o to fall back on next to --config)")
@@ -458,12 +528,10 @@ def parse_plate_config(text: str, *, source: str = "<config>",
                        "[plate]", source)
     height_mm = _number(_required(plate, "height_mm", "[plate]", source), "height_mm",
                         "[plate]", source)
-    exposure_s = None
-    if "exposure_s" in plate:
-        exposure_s = _number(plate["exposure_s"], "exposure_s", "[plate]", source)
+    exposure_s = _times(plate, "[plate]", source)
     rotate = _rotation(plate, "[plate]", source)
 
-    output = _output(data, source, base)
+    output = _output(data, source, base, series=type(plate.get("exposure_s")) is list)
 
     marker_at_mm = None
     if "marker" in data:
@@ -498,5 +566,5 @@ def load_plate_config(path: str | Path) -> PlateConfig:
 
 __all__ = ["BarsSpec", "FIGURE_KEYS", "FigureSpec", "GridSpec", "KINDS", "OUTPUT_KEYS",
            "PLATE_KEYS", "PatchesSpec", "PlateConfig", "PlateOutput", "ROTATIONS",
-           "SquareSpec", "TEXT_PLACEHOLDER", "TextSpec", "fill_text", "load_plate_config",
-           "parse_plate_config"]
+           "SERIES_KEYS", "SquareSpec", "TEXT_PLACEHOLDER", "TextSpec", "fill_path",
+           "fill_text", "load_plate_config", "parse_plate_config"]

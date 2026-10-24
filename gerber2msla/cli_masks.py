@@ -38,7 +38,7 @@ from .patterns import (DEFAULT_GRID_GAP_MM, DEFAULT_GRID_HEIGHT_MM, DEFAULT_GRID
                        PLATE_GRID_HEIGHT_MM, PLATE_GRID_WIDTH_MM, PLATE_HEIGHT_MM,
                        PLATE_MARGIN_MM, PLATE_WIDTH_MM, Width, build_bars, build_grid,
                        build_plate, build_square)
-from .plate_config import load_plate_config
+from .plate_config import fill_path, load_plate_config
 from .plate_layout import build_config_plate
 from .px6s import read_file
 from .px6s_write import write_file
@@ -448,12 +448,13 @@ def _cmd_plate(args: argparse.Namespace) -> int:
 
 
 def _plate_from_config(args: argparse.Namespace) -> int:
-    """The plate a config asks for: figures, marker, time, printer and outputs — all from it.
+    """The plate a config asks for: figures, marker, time(s), printer and outputs — all from it.
 
-    ONE picture: `compose` runs once and BOTH files are written from it, because a PNG and
-    a .px6s of one plate drawn twice could differ by a pixel, and then nobody knows which
-    one was exposed. The report and the PNG chunk carry the config TEXT whole: a month
-    later the file alone does not say what was exposed.
+    ONE picture PER TIME: `compose` runs once and BOTH files of that time are written from
+    it, because a PNG and a .px6s of one plate drawn twice could differ by a pixel, and then
+    nobody knows which one was exposed. A LIST of times writes one file per time (plan of
+    25.10), its own label and its own name; the config TEXT goes into every PNG chunk and is
+    printed once, because a month later the file alone does not say what was exposed.
     """
     _refuse_layout_flags(args)      # -o, --template, --screen-px, --pixel-um are in the list
     config = load_plate_config(args.config)
@@ -466,32 +467,45 @@ def _plate_from_config(args: argparse.Namespace) -> int:
     # then the geometry changes while the file header keeps the template's number.
     flags = SimpleNamespace(screen_px=None, pixel_um=config.output.pixel_um)
     screen, pixel_line = screen_for(flags, printer)
-    placements, report = build_config_plate(screen, config)
-    image, placed = compose(screen, placements, mirror=args.mirror, invert=args.invert)
-    lines = (pixel_line, *report, *placed)
-    for line in lines:
-        if line.startswith("warning: "):
-            print(line, file=sys.stderr)
-    print("\n".join(line for line in lines if not line.startswith("warning: ")))
+
     print(f"config, whole, as read from {config.label}:")
     for line in config.text.splitlines():
         print(f"  {line}")
+    if len(config.times) > 1:
+        listed = ", ".join(f"{time:g}" for time in config.times)
+        print(f"series: {len(config.times)} time(s) from [plate] exposure_s, one file each: "
+              f"{listed} s")
 
-    png = config.output.png
-    if png is not None:
-        existed = png.exists()      # asked BEFORE the write: after it the answer is yes
-        written = write_mask(png, screen, lines, image, config_text=config.text)
-        print(f"{'overwrote' if existed else 'Wrote'} {written}: "
-              f"{screen.width_px} x {screen.height_px} px mask")
-    px6s = config.output.px6s
-    if px6s is not None:
-        existed = px6s.exists()
-        px6s.parent.mkdir(parents=True, exist_ok=True)
-        written, writer_lines = write_file(config.output.template, image, px6s,
-                                           config.exposure_s)
-        print("\n".join(writer_lines))
-        print(f"{'overwrote' if existed else 'Wrote'} {written}: "
-              f"{screen.width_px} x {screen.height_px} px layer")
+    written: list[Path] = []
+    for index, seconds in enumerate(config.times, start=1):
+        if len(config.times) > 1:
+            print(f"--- plate {index} of {len(config.times)}: {seconds:g} s")
+        placements, report = build_config_plate(screen, config, seconds)
+        image, placed = compose(screen, placements, mirror=args.mirror, invert=args.invert)
+        lines = (pixel_line, *report, *placed)
+        for line in lines:
+            if line.startswith("warning: "):
+                print(line, file=sys.stderr)
+        print("\n".join(line for line in lines if not line.startswith("warning: ")))
+
+        if config.output.png is not None:
+            target = fill_path(config.output.png, seconds)
+            existed = target.exists()   # asked BEFORE the write: after it the answer is yes
+            written.append(write_mask(target, screen, lines, image, config_text=config.text))
+            print(f"{'overwrote' if existed else 'Wrote'} {written[-1]}: "
+                  f"{screen.width_px} x {screen.height_px} px mask")
+        if config.output.px6s is not None:
+            target = fill_path(config.output.px6s, seconds)
+            existed = target.exists()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            wrote, writer_lines = write_file(config.output.template, image, target, seconds)
+            written.append(wrote)
+            print("\n".join(writer_lines))
+            print(f"{'overwrote' if existed else 'Wrote'} {wrote}: "
+                  f"{screen.width_px} x {screen.height_px} px layer, {seconds:g} s")
+
+    if len(config.times) > 1:
+        print(f"series: {len(config.times)} time(s), {len(written)} file(s), one per time")
     return EXIT_OK
 
 

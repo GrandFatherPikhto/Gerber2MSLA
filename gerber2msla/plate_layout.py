@@ -83,9 +83,14 @@ def _require_on_plate(name: str, figure: Figure, x_px: int, y_px: int,
         f"figure to make it fit: move it or make it smaller")
 
 
-def build_config_plate(screen: Screen,
-                       config: PlateConfig) -> tuple[tuple[Placement, ...], tuple[str, ...]]:
+def build_config_plate(screen: Screen, config: PlateConfig,
+                       seconds: float | None = None,
+                       ) -> tuple[tuple[Placement, ...], tuple[str, ...]]:
     """The whole plate as ONE figure: drawn, then turned, then centred on the screen.
+
+    ``seconds`` is the exposure time of THIS file: a series (plan of 25.10) writes one file
+    per time, and the label `{exposure_s}` must say this file's time, not the first one.
+    ``None`` is a config that names no time at all (a PNG-only plate).
 
     ``[plate] rotate`` turns the FINISHED plate — every figure and the marker — by 90, 180
     or 270 degrees COUNTER-clockwise, and the turned plate is centred again (plan of 25.10:
@@ -109,9 +114,9 @@ def build_config_plate(screen: Screen,
     report = [
         f"config: {config.label}, {len(config.figures)} figure(s) in the order of the file",
     ]
-    if config.exposure_s is not None:
-        report.append(f"exposure: {config.exposure_s:g} s from [plate] exposure_s: the "
-                      f"printer file uses it for the layer AND for the bottom layer")
+    if seconds is not None:
+        report.append(f"exposure: {seconds:g} s from [plate] exposure_s: the printer file "
+                      f"uses it for the layer AND for the bottom layer")
 
     placements: list[Placement] = []
     if config.marker_at_mm is None:
@@ -130,7 +135,7 @@ def build_config_plate(screen: Screen,
             f"({offset_x}, {offset_y} px inside it)")
 
     for spec in config.figures:
-        figure = _figure_of(spec, screen, config.exposure_s)
+        figure = _figure_of(spec, screen, seconds)
         offset_x, offset_y = _corner_px(spec.at_mm, screen)
         _require_on_plate(spec.name, figure, offset_x, offset_y, plate_w_px, plate_h_px,
                           screen)

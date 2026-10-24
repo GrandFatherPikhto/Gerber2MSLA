@@ -40,7 +40,7 @@ import pytest
 
 from gerber2msla.masks import Refusal, Screen, marker_pixels
 from gerber2msla.patterns import Width
-from gerber2msla.plate_config import load_plate_config, parse_plate_config
+from gerber2msla.plate_config import fill_path, load_plate_config, parse_plate_config
 from gerber2msla.plate_layout import build_config_plate
 
 SCREEN = Screen(width_px=200, height_px=200, pixel_x_um=100.0, pixel_y_um=100.0)
@@ -519,12 +519,83 @@ def test_the_marker_is_one_f_where_the_config_puts_it():
 
 
 def test_the_exposure_time_is_read_and_named_in_the_report():
-    """`[plate] exposure_s` belongs to the config (decision of 24.10): it is reported."""
+    """`[plate] exposure_s` belongs to the config (decision of 24.10): it is reported.
+
+    Since 25.10 it is a TUPLE of times — a list is a series, one file per time — so one
+    number is a tuple of one. This cell pins that shape and the line of the file's time.
+    """
     text = _with_line(BASE, "height_mm", "height_mm = 16\nexposure_s = 25")
     config = _read(text)
-    assert config.exposure_s == 25.0
-    _, report = build_config_plate(SCREEN, config)
+    assert config.exposure_s == (25.0,), "one number, a tuple of one"
+    assert config.times == (25.0,), "one entry per file to write"
+    _, report = build_config_plate(SCREEN, config, 25.0)
     assert "exposure: 25 s from [plate] exposure_s" in "\n".join(report)
+
+
+# ─────────────────────────── the series (25.10) ────────────────────────────
+
+SERIES = (_with_line(BASE, "height_mm", "height_mm = 16\nexposure_s = [7, 25]")
+          .replace('px6s = "plate.px6s"', 'px6s = "plate_{exposure_s}s.px6s"'))
+
+
+def test_a_list_of_times_is_a_series_read_in_order():
+    """One plate per time, in the order of the file — the copies of one config are gone."""
+    config = _read(SERIES)
+    assert config.exposure_s == (7.0, 25.0)
+    assert config.times == (7.0, 25.0), "one entry per file to write"
+
+
+def test_one_number_is_a_tuple_of_one_and_no_key_is_no_time():
+    single = _read(_with_line(BASE, "height_mm", "height_mm = 16\nexposure_s = 25"))
+    assert single.times == (25.0,)
+    assert _read(BASE).exposure_s is None, "no [plate] exposure_s at all"
+    assert _read(BASE).times == (None,), "one file, and it has no time to write"
+
+
+@pytest.mark.parametrize("label, line, expected", [
+    ("an empty list", "exposure_s = []", "empty array"),
+    ("the same time twice", "exposure_s = [7, 7.0]", "holds 7 twice"),
+    ("a string in the list", 'exposure_s = [7, "10"]', "'exposure_s[1]' must be a number"),
+    ("a negative time", "exposure_s = [7, -1]", "'exposure_s[1]' must be positive"),
+], ids=["an empty list", "the same time twice", "a string in the list", "a negative time"])
+def test_a_series_that_cannot_write_one_file_per_time_is_refused(label, line, expected):
+    assert expected in _message(_with_line(BASE, "height_mm", f"height_mm = 16\n{line}"))
+
+
+def test_a_series_must_name_the_time_in_every_output_path():
+    """Without the time the files would overwrite each other, and the last would win."""
+    plain = _with_line(BASE, "height_mm", "height_mm = 16\nexposure_s = [7, 25]")
+    assert "'px6s' has no {exposure_s}" in _message(plain)
+    _read(SERIES)                       # with the time in the name it is a legal series
+
+
+def test_a_series_must_name_the_time_in_the_png_too():
+    text = _with_line(BASE, "height_mm", "height_mm = 16\nexposure_s = [7, 25]")
+    text = text.replace('px6s = "plate.px6s"',
+                        'px6s = "plate_{exposure_s}s.px6s"\npng = "plate.png"')
+    assert "'png' has no {exposure_s}" in _message(text)
+
+
+def test_a_second_brace_in_an_output_path_is_refused():
+    text = _with_line(BASE, "height_mm", "height_mm = 16\nexposure_s = [7, 25]")
+    text = text.replace('px6s = "plate.px6s"', 'px6s = "plate_{expo}s.px6s"')
+    assert "character 7 of 'px6s'" in _message(text)
+
+
+@pytest.mark.parametrize("name, seconds, expected", [
+    ("out/plate_{exposure_s}s.px6s", 7.0, "out/plate_7s.px6s"),
+    ("out/plate_{exposure_s}s.px6s", 2.5, "out/plate_2.5s.px6s"),
+    ("out/plate.png", 7.0, "out/plate.png"),
+], ids=["7 s", "2.5 s", "no substitution"])
+def test_an_output_path_takes_the_time_into_its_name(name, seconds, expected):
+    """The same number as the label: no trailing zeros, no padding."""
+    assert fill_path(Path(name), seconds) == Path(expected)
+
+
+def test_an_output_path_that_asks_for_a_time_the_config_has_not_got_is_refused():
+    with pytest.raises(Refusal) as caught:
+        fill_path(Path("plate_{exposure_s}s.px6s"), None)
+    assert "{exposure_s}" in str(caught.value)
 
 
 # ──────────────────────── the label's substitution (25.10) ──────────────────

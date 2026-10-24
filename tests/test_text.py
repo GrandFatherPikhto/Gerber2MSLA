@@ -241,6 +241,6 @@ TEXT_OF_TIME = (TEXT_ONLY.replace("height_mm = 80", "height_mm = 80\nexposure_s 
 def test_the_drawn_label_carries_the_time_it_was_built_with(sixks_screen):
     """The point of the substitution: a copied config with another time draws "7s"."""
     config = parse_plate_config(TEXT_OF_TIME, source="plate.toml")
-    _, report = build_config_plate(sixks_screen, config)
+    _, report = build_config_plate(sixks_screen, config, 7.0)
     assert "pattern: text '7s'" in "\n".join(report), \
         "the file says {exposure_s}, the plate says 7s"

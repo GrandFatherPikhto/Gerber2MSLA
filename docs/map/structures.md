@@ -228,7 +228,9 @@ cli_board.py  `board`: одна медь или `--config`; BOARD_FLAGS — чт
 ```
 PlateConfig                     — прочитанный конфиг, ещё БЕЗ пикселей
   width_mm, height_mm: float    — размер пластины
-  exposure_s: float | None      — [plate] exposure_s; нужен для .px6s
+  exposure_s: tuple | None      — времена серии, в порядке файла; None = ключа нет
+  times                         — свойство: (None,) если ключа нет, иначе сам кортеж:
+                                  один файл на запись
   marker_at_mm: tuple | None    — None = [marker] нет = метки нет
   figures: tuple[FigureSpec,…]  — в порядке ФАЙЛА
   output: PlateOutput           — [output] (Б0): принтер и выход
@@ -264,18 +266,25 @@ parse_plate_config(text, *, source=…, base=None, path=None) -> PlateConfig
 load_plate_config(path) — read_text UTF-8 -> parse -> _must_exist(шаблон); нет файла или
                           не UTF-8 — Refusal одной строкой
 
+_times                — [plate] exposure_s: число ИЛИ массив; пустой массив и повтор
+                        времени — отказ; None = ключа нет
 _rotation             — [plate] rotate: 0/90/180/270, нет ключа — 0; иное — отказ
-_placeholders         — в text одна подстановка {exposure_s}; иная скобка — отказ с
-                        НОМЕРОМ СИМВОЛА
+_placeholders         — в text И в путях одна подстановка {exposure_s}; иная скобка —
+                        отказ с НОМЕРОМ СИМВОЛА
+_series_output        — у серии КАЖДЫЙ путь [output] обязан держать {exposure_s}, иначе
+                        отказ: файлы затёрли бы друг друга
 fill_text(text, exposure_s) — подстановка времени без хвоста нулей (20, 7, 2.5); нет
                         exposure_s — отказ с именем ключа
+fill_path(path, exposure_s) — то же для ИМЕНИ файла; нет подстановки — путь как есть
 
-build_config_plate(screen, config) -> (placements, report)
+build_config_plate(screen, config, seconds=None) -> (placements, report)
+  seconds               — время ЭТОГО файла: серия зовёт функцию на каждое время, и надпись
+                          `{exposure_s}` говорит своё время, а не первое из списка
   пластина: _quantised по каждой оси; фигуры кладутся на ХОЛСТ РАЗМЕРОМ ПЛАСТИНЫ
   _require_on_plate     — пластина больше экрана и фигура за пластиной — отказ с именем
   _corner_px            — at_mm / pitch по СВОЕЙ оси, round; ноль законен
   _figure_of            — та же build_*, что у одиночной команды; надпись получает
-                          fill_text(spec.text, config.exposure_s)
+                          fill_text(spec.text, seconds)
   compose(холст, …)     — холст собирается ОДНИМ compose: пересечения — его отказы
   np.rot90(…)           — rotate != 0: ГОТОВАЯ картинка поворачивается ПРОТИВ часовой;
                           четверть оборота на неквадратном пикселе — отказ
