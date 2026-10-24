@@ -203,6 +203,45 @@ cli_px6s.py   `write`: маска PNG -> write_file -> отчёт; `dump`: read_
 
 Маски НЕ переезжают в px6s-модуль: разделение — «маски здесь, write/dump/dose там».
 
+## Конфиг пластины — `gerber2msla/plate_config.py` и `plate_layout.py` (К1, К2)
+
+```
+PlateConfig                     — прочитанный конфиг, ещё БЕЗ пикселей
+  width_mm, height_mm: float    — размер пластины
+  exposure_s: float | None      — [plate] exposure_s; нужен для .px6s
+  marker_at_mm: tuple | None    — None = [marker] нет = метки нет
+  figures: tuple[FigureSpec,…]  — в порядке ФАЙЛА
+  text: str                     — файл целиком, как прочитан (уезжает в кусок PNG)
+  path: Path | None             — для сообщений; None у текста из памяти
+  label                         — «<config>» или путь
+
+FigureSpec = SquareSpec | GridSpec | BarsSpec | PatchesSpec
+  name: str                     — «kind #N», N с 1 по порядку в файле: этим именем
+                                  фигуру называют отказы compose и пластины
+  at_mm: tuple                  — левый верхний угол ОТ УГЛА ПЛАСТИНЫ
+  … свои ключи вида              — SquareSpec size_mm+line; GridSpec + gap+direction;
+                                  BarsSpec widths+lines; PatchesSpec patch_mm+
+                                  patch_gap_mm+widths+gap (None = «зазор = ширина»)
+
+parse_plate_config(text, source=…, path=…) -> PlateConfig
+  tomllib.loads; TOMLDecodeError -> Refusal с НОМЕРОМ СТРОКИ (lineno, затем текст)
+  _table/_keys/_required  — на КАЖДОМ уровне: корень, [plate], [marker], фигура, {from,to,step}
+  _number/_whole/_pair/_string — bool не число, px только целое, пара ровно из двух
+  _widths/_range        — список ИЛИ {from, to, step} включительно, допуск 1e-9
+load_plate_config(path) — read_text UTF-8 -> parse; нет файла/не UTF-8 — Refusal одной строкой
+
+build_config_plate(screen, config) -> (placements, report)
+  пластина: _quantised по каждой оси, origin_pixels(…, None) = ЦЕНТР экрана
+  _require_on_plate     — пластина больше экрана и фигура за пластиной — отказ с именем
+  _corner_px            — at_mm / pitch по СВОЕЙ оси, round; ноль законен
+  _figure_of            — та же build_* , что у одиночной команды
+  Placement(at_mm=None) — поэтому compose печатает мм ЭКРАНА, а мм пластины — в отчёте здесь
+```
+
+Кусок PNG: `masks.write_mask(..., config_text=…)` кладёт текст конфига в iTXt под ключом
+`plate_config`; кусок отчёта `msla_tests` при этом не меняется — на этом стоит оракул К2
+(«пример = зашитая раскладка» сравнивается по пикселям).
+
 ## Команда `dump` — `gerber2msla/cli_px6s.py` (П3)
 
 ```

@@ -79,6 +79,65 @@ measurement. The real pixel is measured with the `square` (see below), one axis 
 * the report — screen, pixel, widths requested and actual, mirror, polarity — is also
   written into the PNG text chunk `msla_tests`, so the file remembers what it is.
 
+## A plate from a config
+
+The built-in plate is one layout. Your own plate is a **TOML** file: what lies where, in
+millimetres from the plate's own top-left corner.
+
+```sh
+# a mask, or a printer file straight away
+.venv/bin/gerber2msla masks plate --config examples/plate_70x78.toml \
+    --screen-px 5760x3600 --pixel-um 34x34 -o out/plate.png
+.venv/bin/gerber2msla masks plate --config examples/plate_70x80_25s.toml \
+    --template real.px6s -o out/plate_25s.px6s
+```
+
+```toml
+[plate]
+width_mm = 70
+height_mm = 78
+exposure_s = 25                  # for a .px6s; both times come from here
+
+[marker]                         # optional: no [marker] means no letter F
+at_mm = [3.196, 3.196]
+
+[[figure]]
+kind = "square"                  # square | bars | patches | grid
+at_mm = [2, 2]
+size_mm = [66, 74]
+line_mm = 0.2                    # or line_px = 6
+
+[[figure]]
+kind = "patches"                 # one 10 mm patch per width, a row per width
+at_mm = [5, 5]
+patch_mm = 10
+patch_gap_mm = 1.5
+widths_mm = { from = 0.05, to = 0.20, step = 0.05 }   # inclusive
+gap = "same"                     # gap = the stripe width; or gap_mm / gap_px
+```
+
+* **The config is strict in both directions.** There are no defaults: a key that is not
+  in the table of its kind, and a key that is missing, are both refusals that name the
+  key and list the keys that belong there. An unknown figure kind, a wrong type
+  (`true` is not a number, `6.0` is not a pixel count), a table that is not a table — all
+  refused. A TOML syntax error is refused with the LINE NUMBER of the file. A typo never
+  becomes a default.
+* **One source of truth.** Next to `--config`, the built-in layout flags (`--plate-mm`,
+  `--at`, `--widths-*`, `--lines`, `--grid-mm`, `--margin-mm`, `--square-line-*`,
+  `--line-*`, `--gap-*`, `--direction`) and `--exposure-s` are refused by name: the
+  config answers those questions. The plate is centred on the screen; a figure that
+  leaves the plate or overlaps another is refused with both names, never shrunk.
+* **`patches`** rows: the left square of a row holds stripes along X (the Y resolution
+  shows), the right one stripes along Y (the X resolution). A stripe is drawn whole and
+  the first is flush with the near edge — the leftover at the far edge is a gap, because
+  a stretched stripe would measure a width nobody asked for.
+* **The config travels with the mask.** The whole file, byte for byte, goes into the PNG
+  chunk `plate_config` (iTXt, UTF-8 — your comments are yours, and Russian is fine); the
+  report prints it too. The report chunk `msla_tests` is unchanged.
+* `examples/plate_70x78.toml` is the built-in plate written as a config — the ORACLE:
+  its PNG is pixel-for-pixel the PNG without `--config`.
+  `examples/plate_70x78_patches.toml` is the same plate with 10 mm patches.
+
 ## Write a printer file
 
 ```sh

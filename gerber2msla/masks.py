@@ -30,6 +30,13 @@ from PIL import Image, PngImagePlugin
 WHITE = 255
 UM_PER_MM = 1000.0
 REPORT_KEY = "msla_tests"
+CONFIG_KEY = "plate_config"
+"""Text chunk of the plate config: iTXt, UTF-8, the WHOLE file as it was read.
+
+Not tEXt: that one is latin-1, and the operator writes comments in Russian (decision of
+24.10) — a plate whose config cannot be recovered from its own PNG is a plate nobody can
+explain a month later.
+"""
 
 MARKER_MM = 2.0
 """Side of the marker square in millimetres. Its pixel count follows each axis."""
@@ -298,8 +305,14 @@ def compose(screen: Screen, placements: Sequence[Placement], *,
 
 
 def write_mask(path: str | Path, screen: Screen, report: Sequence[str],
-               image: np.ndarray) -> Path:
-    """Write the PNG (mode L, exactly the screen) with the report in a text chunk."""
+               image: np.ndarray, *, config_text: str | None = None) -> Path:
+    """Write the PNG (mode L, exactly the screen) with the report in a text chunk.
+
+    ``config_text`` is the plate config, if the plate came from one: it goes into its OWN
+    chunk, iTXt and UTF-8, byte for byte, and the report chunk is left as it was — so a
+    mask written from a config and a mask written without one still differ only where the
+    picture differs (`diagnostics/accept_p4_cmp_2026_10_23.py` compares those bytes).
+    """
     text = (
         "msla_tests: a test mask for an MSLA printer",
         f"screen: {screen.width_px} x {screen.height_px} px",
@@ -310,5 +323,7 @@ def write_mask(path: str | Path, screen: Screen, report: Sequence[str],
     target.parent.mkdir(parents=True, exist_ok=True)
     info = PngImagePlugin.PngInfo()
     info.add_text(REPORT_KEY, "\n".join(text))
+    if config_text is not None:
+        info.add_itxt(CONFIG_KEY, config_text)
     Image.fromarray(image, mode="L").save(target, format="PNG", pnginfo=info)
     return target

@@ -1,0 +1,38 @@
+# A 70 x 78 mm plate of PATCHES: one 10 x 10 mm square per width, 0.05 ... 0.20 mm
+# (plan К2). Each row is a pair of squares: the left one filled with lines along X (so the
+# Y resolution shows), the right one with lines along Y (the X resolution). The rows go top
+# to bottom in the order written here.
+#
+# Millimetres; the origin is the plate's own top-left corner. The frame is the plate minus
+# a 2 mm margin, exactly as the built-in plate has it, so the two plates can be laid side
+# by side and read with one caliper.
+
+[plate]
+width_mm = 70
+height_mm = 78
+exposure_s = 25
+
+[marker]
+at_mm = [3.196, 3.196]         # 94 px: the letter F, one per plate
+
+[[figure]]                     # the frame: measure OUTER edge to outer edge -> the real pixel
+kind = "square"
+at_mm = [2, 2]
+size_mm = [66, 74]
+line_mm = 0.2
+
+[[figure]]                     # 4 rows of 10 mm squares; the gap is 1.5 mm inside a row
+kind = "patches"               # and between the rows, so the plate reads as a grid
+at_mm = [5, 5]
+patch_mm = 10
+patch_gap_mm = 1.5
+widths_mm = { from = 0.05, to = 0.20, step = 0.05 }
+gap = "same"                   # the gap between the stripes IS the stripe width
+
+[[figure]]                     # the evenness grid, to the right of the patches
+kind = "grid"
+at_mm = [36, 5]
+size_mm = [30, 30]
+line_mm = 0.2
+gap_mm = 0.15
+direction = "both"

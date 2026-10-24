@@ -1,0 +1,39 @@
+# The plate the utility draws WITHOUT a config, said as a config: the ORACLE (plan К2).
+# Run it next to the built-in one and the pixels must be identical — that is the cell
+# `test_the_example_reproduces_the_built_in_plate_pixel_for_pixel`. If this file and the
+# built-in layout ever part, one of them is wrong, and the picture says which.
+#
+# Millimetres; the origin is the plate's own top-left corner. The plate is centred on the
+# screen, as every mask command centres its figure by default.
+#
+# The numbers are not round because they are PIXELS of a 34 um screen written as
+# millimetres: 94 px = 3.196 mm, 182 px = 6.188 mm, 1044 px = 35.496 mm. Rounded they
+# would move the figure by a pixel, and the oracle would stop being an oracle.
+
+[plate]
+width_mm = 70
+height_mm = 78
+exposure_s = 25
+
+[marker]
+at_mm = [3.196, 3.196]         # 94 px: one F per plate, as the built-in layout puts it
+
+[[figure]]                     # the frame: 66 x 74 mm, i.e. the plate minus a 2 mm margin
+kind = "square"
+at_mm = [2, 2]
+size_mm = [66, 74]
+line_mm = 0.2
+
+[[figure]]                     # the laser's own bars, in the built-in place and order
+kind = "bars"
+at_mm = [3.196, 6.188]
+widths_mm = [0.2, 0.15, 0.1, 0.08, 0.06, 0.05]
+lines = 5
+
+[[figure]]                     # the evenness grid of the right half
+kind = "grid"
+at_mm = [35.496, 3.196]
+size_mm = [30, 30]
+line_mm = 0.2
+gap_mm = 0.15
+direction = "both"

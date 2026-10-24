@@ -20,6 +20,10 @@ So the report says which pixel was used and what the header keeps:
 ``--template`` the pixel and the screen are mandatory, as in ``masks``, and the PNG carries
 them (it is the only thing that can).
 
+The function itself is `screen_choice.screen_for` (plan К2): ``masks plate --config`` asks
+the same question, and a second copy of this answer is where two commands would start to
+disagree about the same template.
+
 Everything about geometry lives in `board.py`; placement, the mirror, the polarity and the
 marker are `masks.compose`/`add_marker`; the printer file is the П2 writer and nothing else.
 The CLI below only parses, chooses the screen, and prints.
@@ -32,45 +36,15 @@ from pathlib import Path
 from .board import build_board
 from .cli_masks import _micrometres_pair, _millimetres_pair, _pixels_pair
 from .cli_px6s import _positive_seconds
-from .masks import Refusal, Screen, add_marker, compose, place_figure, write_mask
+from .masks import Refusal, add_marker, compose, place_figure, write_mask
 from .px6s import read_file
 from .px6s_write import write_file
+from .screen_choice import screen_for
 
 EXIT_OK = 0
 
 SUFFIXES = (".png", ".px6s")
 """A mask PNG or a printer file — nothing else: the suffix IS the choice of the output."""
-
-
-# ─────────────────────────── screen and pixel ──────────────────────────────
-
-def _screen_for(args, printer) -> tuple[Screen, str]:
-    """The screen to draw on, and the line that says where its pixel came from."""
-    if printer is not None:
-        header = printer.header
-        if args.screen_px is not None:
-            raise Refusal("the template fixes the screen: --screen-px cannot be given with "
-                          "--template")
-        if args.pixel_um is None:
-            pixel_x_um = pixel_y_um = header.pixel_size_um
-            line = f"pixel: {pixel_x_um:.2f} x {pixel_y_um:.2f} um (template header)"
-        else:
-            pixel_x_um, pixel_y_um = args.pixel_um
-            line = (f"pixel: {pixel_x_um:.2f} x {pixel_y_um:.2f} um (measured, --pixel-um; "
-                    f"the file header keeps {header.pixel_size_um:.2f})")
-        screen = Screen(width_px=header.resolution_x, height_px=header.resolution_y,
-                        pixel_x_um=pixel_x_um, pixel_y_um=pixel_y_um)
-        return screen, line
-
-    if args.screen_px is None or args.pixel_um is None:
-        raise Refusal("without --template the screen and the pixel are mandatory: "
-                      "--screen-px WxH and --pixel-um PXxPY")
-    pixel_x_um, pixel_y_um = args.pixel_um
-    width_px, height_px = args.screen_px
-    screen = Screen(width_px=width_px, height_px=height_px,
-                    pixel_x_um=pixel_x_um, pixel_y_um=pixel_y_um)
-    return screen, (f"pixel: {pixel_x_um:.2f} x {pixel_y_um:.2f} um (measured, --pixel-um; "
-                    f"no template, so the mask carries it)")
 
 
 # ───────────────────────────── the command ────────────────────────────────
@@ -131,7 +105,7 @@ def _cmd_board(args) -> int:
         if args.exposure_s is None:
             raise Refusal("a .px6s needs --exposure-s: one layer, its own exposure time")
 
-    screen, pixel_line = _screen_for(args, printer)
+    screen, pixel_line = screen_for(args, printer)
     figure = build_board(screen, args.copper, drills=args.drill, outline=args.outline)
     if args.marker:
         figure = add_marker(screen, figure)
