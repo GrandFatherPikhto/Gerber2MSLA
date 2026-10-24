@@ -231,6 +231,36 @@ def test_the_printer_file_keeps_the_picture_of_the_mask(capsys, template, board_
     assert np.array_equal(_pixels(mask), _pixels(dumped))
 
 
+def test_the_mask_carries_the_pixel_provenance_in_its_chunk(capsys, template, board_files):
+    """`write_mask` is untouched, but the provenance travels INSIDE the figure's report.
+
+    So a mask file found on the printer's stick still says which pixel drew it — the
+    measured one, with the value the file header keeps.
+    """
+    mask = board_files["dir"] / "chunk.png"
+    out = _run(capsys, "board", str(board_files["copper"]), "--outline",
+               str(board_files["outline"]), "--template", str(template),
+               "--pixel-um", "34x30", "-o", str(mask))
+    line = "pixel: 34.00 x 30.00 um (measured, --pixel-um; the file header keeps 34.00)"
+    assert line in out
+    chunk = Image.open(mask).text.get("msla_tests", "")
+    assert line in chunk, "the provenance must travel with the mask, not only in stdout"
+
+
+def test_the_polarity_line_speaks_about_the_copper(capsys, template, board_files):
+    """A board lights the copper, a test mask lights lines: each report uses its own word."""
+    mask = board_files["dir"] / "polarity.png"
+    out = _run(capsys, "board", str(board_files["copper"]), "--outline",
+               str(board_files["outline"]), "--template", str(template), "-o", str(mask))
+    assert "polarity: white = the copper (a negative resist keeps what was lit)" in out
+
+    mask_out = board_files["dir"] / "lines.png"
+    out = _run(capsys, "masks", "bars", "--screen-px", "5760x3600", "--pixel-um", "34x34",
+               "-o", str(mask_out))
+    assert "polarity: white = the lines (a negative resist keeps what was lit)" in out, \
+        "the masks' own line must stay exactly as it was"
+
+
 # ───────────────────────────── refusals ────────────────────────────────────
 
 @pytest.fixture

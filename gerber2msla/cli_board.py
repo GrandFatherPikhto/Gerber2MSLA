@@ -137,16 +137,20 @@ def _cmd_board(args) -> int:
         figure = add_marker(screen, figure)
 
     image, placed = compose(screen, [place_figure(screen, figure, args.at)],
-                            mirror=args.mirror, invert=args.invert)
-    lines = (*figure.report, *placed)
+                            mirror=args.mirror, invert=args.invert,
+                            polarity_what="the copper")
+    # The provenance goes INTO the figure's report, and the figure's report is what
+    # `write_mask` puts into the PNG chunk: a mask file then says which pixel drew it.
+    # `masks` is not touched — its own report stays what Gerber2LDI printed, byte for byte.
+    report = (pixel_line, *figure.report)
+    lines = (*report, *placed)
     for line in lines:
         if line.startswith("warning: "):
             print(line, file=sys.stderr)
-    print(pixel_line)
     print("\n".join(line for line in lines if not line.startswith("warning: ")))
 
     if suffix == ".png":
-        written = write_mask(target, screen, (), image)
+        written = write_mask(target, screen, report, image)
         print(f"Wrote {written}: {screen.width_px} x {screen.height_px} px mask")
         return EXIT_OK
 

@@ -42,6 +42,17 @@ X1.0Y1.0
 M30
 """
 
+EXCELLON_WITHOUT_HOLES = """M48
+FMAT,2
+METRIC
+T1C0.600
+%
+G90
+G05
+T1
+M30
+"""
+
 
 def _coord(value: float) -> str:
     return f"{int(round(value * 1e6))}"
@@ -229,6 +240,24 @@ def test_the_report_announces_a_hole_narrower_than_two_pixels(tmp_path):
                 if line.startswith("warning: ") and "under 2 px" in line]
     assert warnings, "a hole below two pixels must be announced, not silently closed"
     assert "0.150 mm" in warnings[0] and "1.5 px" in warnings[0]
+
+
+def test_every_drill_file_is_named_with_its_own_count(tmp_path):
+    """A file with no hits is legal and must be VISIBLE by name: `0 holes (the file has none)`.
+
+    Two lines, not one summary: a silent zero looks exactly like a file that was never read,
+    and a plate is drilled from several files at once.
+    """
+    pad = _flash("C,2.0", 1.0, 1.0)
+    pth = tmp_path / "PTH.drl"
+    pth.write_text(EXCELLON)
+    npth = tmp_path / "NPTH.drl"
+    npth.write_text(EXCELLON_WITHOUT_HOLES)
+    figure = _board(tmp_path, _layer(pad), drills=[pth, npth])
+    assert "PTH.drl: 1 hole" in figure.report
+    assert "NPTH.drl: 0 holes (the file has none)" in figure.report
+    assert any(line.startswith("holes: 1 of 1 subtracted") for line in figure.report), \
+        "the summary still says how many were actually poured"
 
 
 # ────────────────────────────────── frame ──────────────────────────────────

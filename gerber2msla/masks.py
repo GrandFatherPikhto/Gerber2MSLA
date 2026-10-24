@@ -222,12 +222,18 @@ def _where(placement: Placement, screen: Screen) -> str:
 
 
 def compose(screen: Screen, placements: Sequence[Placement], *,
-            mirror: bool, invert: bool) -> tuple[np.ndarray, tuple[str, ...]]:
+            mirror: bool, invert: bool,
+            polarity_what: str = "the lines") -> tuple[np.ndarray, tuple[str, ...]]:
     """Paste every figure, then mirror and invert the WHOLE picture.
 
     One path for one figure and for a plate of several: an unnamed placement is the single
     pattern, a named one is a figure of the plate. A clash is a refusal — the plate never
     shrinks a figure silently to make it fit.
+
+    ``polarity_what`` names what WHITE means in the report: a test mask lights lines, a
+    board lights the copper, and the operator reads the line that belongs to the picture in
+    front of him. The default is the masks' own wording, so their report stays byte for byte
+    what Gerber2LDI 364fd28 printed.
     """
     image = np.zeros((screen.height_px, screen.width_px), dtype=np.uint8)
     owner = np.full((screen.height_px, screen.width_px), -1, dtype=np.int32)
@@ -286,7 +292,8 @@ def compose(screen: Screen, placements: Sequence[Placement], *,
         image = WHITE - image
         lines.append("polarity: white = the gaps (inverted: the resist keeps what was NOT lit)")
     else:
-        lines.append("polarity: white = the lines (a negative resist keeps what was lit)")
+        lines.append(f"polarity: white = {polarity_what} "
+                     f"(a negative resist keeps what was lit)")
     return image, tuple(lines)
 
 

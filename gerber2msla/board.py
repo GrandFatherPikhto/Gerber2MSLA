@@ -172,8 +172,16 @@ def build_board(screen: Screen, copper: str | Path, *,
                 pixels[image_row, first:last] = WHITE
 
     holes: list[Hole] = []
+    drill_lines: list[str] = []
     for path in drills:
-        holes.extend(load_drill(path))
+        found = load_drill(path)
+        # An empty drill file is legal (KiCad writes an empty NPTH.drl when nothing is
+        # plated through), and the operator has to SEE which file gave nothing: a silent
+        # zero looks exactly like a file that was never read.
+        counted = f"{len(found)} hole" + ("" if len(found) == 1 else "s")
+        drill_lines.append(f"{Path(path).name}: {counted}"
+                           + ("" if found else " (the file has none)"))
+        holes.extend(found)
     drawn = _pour_holes(pixels, holes, screen, box) if holes else 0
 
     small = [hole for hole in holes
@@ -196,8 +204,9 @@ def build_board(screen: Screen, copper: str | Path, *,
         f"{screen.pixel_y_um:.1f} um",
         f"sampling: a pixel is lit when its CENTRE is inside the copper; every row is read "
         f"at the centre of its own pixel ({rows} rows)",
+        *drill_lines,
         (f"holes: {drawn} of {len(holes)} subtracted AFTER the copper, each a circle of its "
-         f"own diameter ({', '.join(Path(path).name for path in drills)})"
+         f"own diameter"
          if holes else "holes: none — a tenting mask (no --drill)"),
         (f"white: {white_px} px of {width_px * height_px} = "
          f"{white_px * screen.pixel_x_mm * screen.pixel_y_mm:.3f} mm2"),

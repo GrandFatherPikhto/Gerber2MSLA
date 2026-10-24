@@ -87,8 +87,9 @@ gerber2msla board F_Cu.gbr --drill PTH.drl --outline Edge_Cuts.gbr --template T.
              ОДИН переворот Y → отверстия чёрным ПОСЛЕ меди → Figure
   masks:     размещение (центр или --at) → --mirror/--invert на всю картинку → PNG
   px6s_write: машинное байт в байт из шаблона, слой — из картинки
-  stdout:    pixel: … (откуда), copper/frame/sampling/holes/white, фигура, зеркало,
-             полярность; stderr — строки warning:; код 2 — отказ одной строкой
+  stdout:    pixel: … (откуда — и эта строка едет в чанк PNG), copper/frame/sampling,
+             по строке на каждый .drl, holes/white, фигура, зеркало, полярность словами
+             платы; stderr — строки warning:; код 2 — отказ одной строкой
 ```
 
 Круг проверки: PNG → `.px6s` → `dump` → PNG пиксель в пиксель; поля, которые не должны меняться, — байт в
