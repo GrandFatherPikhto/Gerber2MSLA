@@ -19,6 +19,20 @@ from gerber2msla.cli import build_parser, main
 from gerber2msla.px6s import read_file
 
 
+@pytest.fixture(autouse=True)
+def _working_directory_inside_tmp(tmp_path, monkeypatch):
+    """Every cell runs with the working directory INSIDE `tmp_path` (rule of 25.10).
+
+    No cell asks for a particular working directory: a config's paths count from the
+    CONFIG's own folder. A mutant of that rule, however, resolves them from the cwd and
+    writes its output there — so the cwd must be a folder pytest deletes, never the
+    repository. The harness proves it after every mutation (`git status --porcelain`).
+    """
+    folder = tmp_path / "cwd"
+    folder.mkdir(exist_ok=True)
+    monkeypatch.chdir(folder)
+
+
 @pytest.mark.parametrize("missing", ["--screen-px", "--pixel-um"])
 def test_the_screen_and_the_pixel_are_mandatory(tmp_path, missing, screen_args,
                                                 square_pixel_args):
