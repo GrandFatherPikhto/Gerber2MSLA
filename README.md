@@ -170,7 +170,7 @@ drills = ["gerber/...-PTH.drl", "gerber/...-NPTH.drl"]
 [[side]]
 name = "top"                                # -> top.px6s, top_align.px6s
 copper = "gerber/...-F_Cu.gbr"
-mirror = false
+mirror = true                               # measured 25.10: an unmirrored file reads mirrored on the copper
 holes = false                               # false = tenting; true = holes poured in the working mask too
 exposure_s = 25
 align_s = 1                                 # optional: <name>_align.px6s, WITH the holes, 1 s
@@ -179,6 +179,11 @@ align_s = 1                                 # optional: <name>_align.px6s, WITH 
 * **One frame for the whole board.** `outline` is required here — on the single-file command
   line it is only a warning, but two sides of one board cannot be lined up without a shared
   frame. The report prints that frame once; every file carries it in its own chunk.
+* **The mirror is the side's own, and it is a MEASURED fact** (25.10, two plates): a file
+  written without `--mirror` reads mirrored on the copper, so `top` (F_Cu) goes out with
+  `mirror = true`, while `bottom` (B_Cu, which KiCad draws as seen from the top) goes out
+  with `mirror = false`. The utility still never mirrors on its own: the flag says it, and
+  the report states which one was used.
 * **The alignment file always has the holes** and its own `align_s`: it is the file the two
   sides are aligned by. `align_s` without `drills` is refused — there is nothing to align by.
 * **A side is a file name**: `name` is `[a-z0-9_-]+` and unique, and it becomes `<name>.px6s`.

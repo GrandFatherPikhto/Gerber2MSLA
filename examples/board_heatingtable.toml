@@ -28,7 +28,7 @@ drills = ["gerber/ControllerSTM32F103C8T6-PTH.drl", "gerber/ControllerSTM32F103C
 [[side]]
 name = "top"
 copper = "gerber/ControllerSTM32F103C8T6-F_Cu.gbr"
-mirror = false
+mirror = true                               # measured 25.10: an unmirrored file reads mirrored on the copper
 holes = false                               # tenting: the working mask keeps the holes white
 exposure_s = 25
 align_s = 1                                 # -> top_align.px6s, with the holes, 1 s
@@ -36,7 +36,7 @@ align_s = 1                                 # -> top_align.px6s, with the holes,
 [[side]]
 name = "bottom"
 copper = "gerber/ControllerSTM32F103C8T6-B_Cu.gbr"
-mirror = true                               # the bottom is seen through the board
+mirror = false                              # KiCad draws the bottom as seen from the top
 holes = false
 exposure_s = 25
 align_s = 1
