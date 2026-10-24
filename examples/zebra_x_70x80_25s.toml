@@ -1,0 +1,16 @@
+# Side A — zebra over the whole plate 70 x 80 mm, 5 mm free margin: tracks 0.2 mm, gaps 0.2 mm.
+# At 34 um a pixel, 0.2 mm is 6 px = 204 um; the pixel form keeps track and gap equal.
+# No marker: a zebra looks the same mirrored, and an F would cut into the stripes.
+
+[plate]
+width_mm = 70
+height_mm = 80
+exposure_s = 25
+
+[[figure]]
+kind = "grid"
+at_mm = [5, 5]
+size_mm = [60, 70]
+line_px = 6
+gap_px = 6
+direction = "x"            # lines along X (horizontal stripes): side A; side B is "y"
