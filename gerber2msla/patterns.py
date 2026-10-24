@@ -19,6 +19,13 @@ PATTERNS (the layout is the label: there is no caption on a mask)
          line is drawn only WHOLE, the leftover at the far edge is a gap, and `both`
          draws the union of the two directions — the same rule as `patterns/grid.py`
          of Gerber2LDI.
+  patches — a row per width (plan K1): the LEFT square of a row is filled with stripes
+         along X (the Y resolution shows), the RIGHT one with stripes along Y (the X
+         resolution), and the gap inside a row equals the gap between the rows. Each
+         square is filled under the same rule as `grid`: a stripe is drawn only WHOLE
+         and the first is flush with the near edge, so the leftover at the far edge is
+         a gap. A stripe is never stretched to fill the side — then the patch would
+         measure a width nobody asked for.
   square — a CLOSED contour of one line width, side_x by side_y. The side and the line
          are whole pixels of their OWN axis, so on a non-square pixel one millimetre
          request is two pixel counts. The report carries the formulas with this order's
@@ -197,6 +204,18 @@ def build_bars(screen: Screen, widths: tuple[Width, ...], lines: int) -> Figure:
                   report=tuple(report) + tuple(f"warning: {text}" for text in warnings))
 
 
+def _fit_count(extent: int, line: int, gap: int) -> int:
+    """How many WHOLE lines fit: line ``i`` sits at ``i·(line + gap)``, first flush.
+
+    One rule for every filled rectangle of the tool — `grid` and the patches of a plate
+    both ask it, so the leftover at the far edge is a gap in both and never a thin line
+    of a width nobody asked for.
+    """
+    if line < 1 or extent < line:
+        return 0
+    return (extent - line) // (line + gap) + 1
+
+
 def build_grid(screen: Screen, width_mm: float, height_mm: float, line: Width,
                gap: Width, direction: str) -> Figure:
     """A rectangle filled with lines: first line flush, whole lines only, rest is a gap."""
@@ -209,14 +228,8 @@ def build_grid(screen: Screen, width_mm: float, height_mm: float, line: Width,
     line_y = _width_pixels(line, screen.pixel_y_mm, "Y", "the line", needed=along_x)
     gap_y = _width_pixels(gap, screen.pixel_y_mm, "Y", "the gap", needed=along_x)
 
-    def fit(extent: int, line: int, gap: int) -> int:
-        """Whole lines only: line ``i`` sits at ``i·(line + gap)``, flush with the edge."""
-        if line < 1 or extent < line:
-            return 0
-        return (extent - line) // (line + gap) + 1
-
-    count_x = fit(rect_y, line_y, gap_y) if along_x else 0
-    count_y = fit(rect_x, line_x, gap_x) if along_y else 0
+    count_x = _fit_count(rect_y, line_y, gap_y) if along_x else 0
+    count_y = _fit_count(rect_x, line_x, gap_x) if along_y else 0
     if along_x and count_x == 0:
         raise Refusal(f"the {screen.mm_y(rect_y):.3f} mm side holds no line "
                       f"{line.label} tall ({line_y} px of {rect_y} px)")
@@ -253,6 +266,83 @@ def build_grid(screen: Screen, width_mm: float, height_mm: float, line: Width,
         _deviation(gap, gap_x, screen.pixel_x_mm, "X") if along_y else None,
         _deviation(gap, gap_y, screen.pixel_y_mm, "Y") if along_x else None,
     ) if text]
+    return Figure(pixels=figure,
+                  report=tuple(report) + tuple(f"warning: {text}" for text in warnings))
+
+
+def build_patches(screen: Screen, side_mm: float, widths: tuple[Width, ...],
+                  gap: Width | None, patch_gap_mm: float) -> Figure:
+    """One S x S patch per width: horizontal square | vertical square, a row per width.
+
+    Rows go top to bottom in the order of the widths, so the plate reads as the config
+    does. Inside a row the gap between the two squares and the gap between the rows are
+    ONE number (``patch_gap_mm``): the squares are spaced, not glued, and one number is
+    one thing to explain to the operator. ``gap`` is the stripe gap of a row: None means
+    "the gap IS the stripe width" (the convention of `bars`), otherwise its own width.
+    """
+    side_x = _quantised(side_mm, screen.pixel_x_mm, "X", "the patch side")
+    side_y = _quantised(side_mm, screen.pixel_y_mm, "Y", "the patch side")
+    patch_gap_x = _quantised(patch_gap_mm, screen.pixel_x_mm, "X", "the patch gap",
+                             needed=False)
+    patch_gap_y = _quantised(patch_gap_mm, screen.pixel_y_mm, "Y", "the patch gap",
+                             needed=False)
+
+    rows = len(widths)
+    figure = np.zeros((rows * side_y + (rows - 1) * patch_gap_y,
+                       2 * side_x + patch_gap_x), dtype=np.uint8)
+    report = [
+        f"pattern: patches, {rows} rows, one per width, the rows in the order given",
+        f"patch: {side_x} x {side_y} px = {screen.mm_x(side_x):.3f} x "
+        f"{screen.mm_y(side_y):.3f} mm per square, the gap between the squares and "
+        f"between the rows {patch_gap_x} x {patch_gap_y} px = "
+        f"{screen.mm_x(patch_gap_x):.3f} x {screen.mm_y(patch_gap_y):.3f} mm",
+        "layout: the left square of a row holds stripes along X (the Y resolution), the "
+        "right one stripes along Y (the X resolution); a stripe is whole and the first is "
+        "flush with the near edge, the leftover at the far edge is a gap",
+    ]
+    along_y: list[int] = []
+    along_x: list[int] = []
+    for index, width in enumerate(widths):
+        stripe_y = _width_pixels(width, screen.pixel_y_mm, "Y", "the stripe")
+        stripe_x = _width_pixels(width, screen.pixel_x_mm, "X", "the stripe")
+        gap_y = (stripe_y if gap is None
+                 else _width_pixels(gap, screen.pixel_y_mm, "Y", "the gap"))
+        gap_x = (stripe_x if gap is None
+                 else _width_pixels(gap, screen.pixel_x_mm, "X", "the gap"))
+        count_y = _fit_count(side_y, stripe_y, gap_y)
+        count_x = _fit_count(side_x, stripe_x, gap_x)
+        if count_y == 0:
+            raise Refusal(f"the {side_mm:.3f} mm patch holds no horizontal stripe "
+                          f"{width.label} tall ({stripe_y} px of {side_y} px)")
+        if count_x == 0:
+            raise Refusal(f"the {side_mm:.3f} mm patch holds no vertical stripe "
+                          f"{width.label} wide ({stripe_x} px of {side_x} px)")
+        top = index * (side_y + patch_gap_y)
+        for number in range(count_y):
+            start = top + number * (stripe_y + gap_y)
+            figure[start:start + stripe_y, 0:side_x] = WHITE
+        left = side_x + patch_gap_x
+        for number in range(count_x):
+            start = left + number * (stripe_x + gap_x)
+            figure[top:top + side_y, start:start + stripe_x] = WHITE
+        leftover_y = side_y - (count_y - 1) * (stripe_y + gap_y) - stripe_y
+        leftover_x = side_x - (count_x - 1) * (stripe_x + gap_x) - stripe_x
+        along_y.append(stripe_y)
+        along_x.append(stripe_x)
+        report.append(
+            f"row {index + 1}: {width.label} -> {stripe_y} px along Y, {stripe_x} px along "
+            f"X; horizontal {count_y} stripes of {stripe_y} px, gap {gap_y} px, leftover "
+            f"{leftover_y} px; vertical {count_x} stripes of {stripe_x} px, gap {gap_x} px, "
+            f"leftover {leftover_x} px")
+    warnings = (_duplicates(widths, along_y, "Y", "horizontal patches")
+                + _duplicates(widths, along_x, "X", "vertical patches")
+                + [text for text in (_deviation(width, along_y[index], screen.pixel_y_mm, "Y")
+                                     for index, width in enumerate(widths)) if text]
+                + [text for text in (_deviation(width, along_x[index], screen.pixel_x_mm, "X")
+                                     for index, width in enumerate(widths)) if text]
+                + [text for text in (
+                    _deviation(Width(mm=side_mm), side_x, screen.pixel_x_mm, "X"),
+                    _deviation(Width(mm=side_mm), side_y, screen.pixel_y_mm, "Y")) if text])
     return Figure(pixels=figure,
                   report=tuple(report) + tuple(f"warning: {text}" for text in warnings))
 

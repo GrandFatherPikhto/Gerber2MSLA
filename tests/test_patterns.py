@@ -29,10 +29,11 @@ import pytest
 from conftest import pixels, run_mask, runs_of_figure
 
 from gerber2msla.cli import main
+from gerber2msla.masks import Refusal, Screen
 from gerber2msla.patterns import (DEFAULT_GRID_GAP_MM, DEFAULT_GRID_LINE_MM,
                                   DEFAULT_SQUARE_LINE_MM, PLATE_GRID_HEIGHT_MM,
                                   PLATE_GRID_WIDTH_MM, PLATE_HEIGHT_MM, PLATE_MARGIN_MM,
-                                  PLATE_WIDTH_MM, Width, build_plate)
+                                  PLATE_WIDTH_MM, Width, build_patches, build_plate)
 
 
 def test_a_width_is_whole_pixels_of_its_own_axis(tmp_path, screen_args, rect_pixel_args):
@@ -381,3 +382,67 @@ def test_the_plate_mirror_report_says_where_each_figure_lands(tmp_path, capsys):
             mirrored[y_px:y_px + height_px, flipped:flipped + width_px],
             np.fliplr(direct[y_px:y_px + height_px, x_px:x_px + width_px])), \
             f"the {name} number is where the figure really landed"
+
+
+# ─────────────────────────── patches (plan K1) ─────────────────────────────
+
+PATCH_SCREEN = Screen(width_px=200, height_px=200, pixel_x_um=100.0, pixel_y_um=100.0)
+"""100 um per pixel: a patch of 1 mm is 10 px, a stripe of 0.2 mm is 2 px, so the cells
+read the drawing as plain run lengths. The patches figure is not clipped by the screen —
+`masks.compose` does that — so the screen here is only the pixel scale."""
+
+
+def test_a_patch_holds_whole_stripes_flush_with_the_near_edge():
+    """Whole stripes only, the first flush with the edge: 10 px holds 2 + 1 gap thrice."""
+    figure = build_patches(PATCH_SCREEN, 1.0, (Width(mm=0.2),), None, 0.5)
+    column = runs_of_figure(figure.pixels[:, 0])
+    assert column == [(255, 2), (0, 2), (255, 2), (0, 2), (255, 2)], \
+        "stripes of 2 px, gap = width, three of them, no sliver at the far edge"
+    assert "horizontal 3 stripes of 2 px, gap 2 px, leftover 0 px" in \
+        "\n".join(figure.report)
+
+
+def test_a_patch_is_whole_pixels_of_each_axis():
+    """A 100 x 50 um pixel: the same 1 mm square is 10 px across and 20 px down."""
+    screen = Screen(width_px=200, height_px=200, pixel_x_um=100.0, pixel_y_um=50.0)
+    figure = build_patches(screen, 1.0, (Width(mm=0.2),), None, 0.5)
+    assert (figure.width_px, figure.height_px) == (25, 20), \
+        "10 px squares across, 20 px down; the 0.5 mm patch gap is 5 px across, 10 down"
+    assert figure.pixels[0:4, 0].all(), "0.2 mm along Y is 4 px"
+    assert not figure.pixels[4:8, 0].any(), "the gap is the width, also 4 px"
+
+
+def test_the_two_squares_of_a_row_are_filled_the_other_way():
+    """Left square: lines along X. Right square: lines along Y. One row, one width."""
+    figure = build_patches(PATCH_SCREEN, 1.0, (Width(mm=0.2),), None, 0.5)
+    left, right = figure.pixels[:, 0:10], figure.pixels[:, 15:25]
+    assert left[0, :].all(), "the first horizontal stripe spans the whole left square"
+    assert not left[2, :].any(), "and the gap after it spans it too"
+    assert right[:, 0].all(), "the first vertical stripe runs the whole height"
+    assert not right[:, 2].any()
+    assert figure.width_px == 25 and figure.height_px == 10, "two squares and one gap"
+
+
+def test_the_patch_rows_go_in_the_order_of_the_widths():
+    """The order in the file IS the order on the plate: the wide stripe is the top row."""
+    figure = build_patches(PATCH_SCREEN, 1.0, (Width(mm=0.2), Width(mm=0.1)), None, 0.5)
+    assert figure.pixels[0:2, 0].all(), "row 1: the 0.2 mm stripe is 2 px"
+    assert not figure.pixels[2:4, 0].any()
+    assert figure.pixels[15, 0] and not figure.pixels[16, 0], \
+        "row 2 (after the 5 px patch gap): the 0.1 mm stripe is 1 px"
+
+
+def test_a_patch_may_have_a_gap_of_its_own():
+    """`gap_mm` is not the width: 2 px stripe with a 1 px gap fits 3 stripes in 10 px."""
+    figure = build_patches(PATCH_SCREEN, 1.0, (Width(mm=0.2),), Width(mm=0.1), 0.5)
+    assert runs_of_figure(figure.pixels[:, 0]) == [(255, 2), (0, 1), (255, 2), (0, 1),
+                                                   (255, 2)]
+    assert not figure.pixels[8:10, 0].any(), "the 2 px leftover at the far edge is a gap"
+    assert "horizontal 3 stripes of 2 px, gap 1 px, leftover 2 px" in \
+        "\n".join(figure.report)
+
+
+def test_a_patch_too_small_for_its_stripe_is_refused():
+    """A stripe thicker than the square is a refusal with both numbers, not a blank patch."""
+    with pytest.raises(Refusal, match=r"holds no horizontal stripe 0.200 mm tall"):
+        build_patches(PATCH_SCREEN, 0.1, (Width(mm=0.2),), None, 0.5)
