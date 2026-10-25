@@ -3,8 +3,10 @@
 # millimetre request collapses (0.06 and 0.08 mm are both 2 px), the pixel form does not.
 
 [output]
-template = "../tests/data/01_test02.px6s"
-px6s = "../out/plate_70x80_20s.px6s"
+template = "../tests/data/01_test02.px6s"   # the screen and the pixel come from HERE
+px6s = "../out/plate_70x78_20s.px6s"
+png = "../out/plate_70x78_20s.png"              # both files out of ONE picture
+
 
 [plate]
 width_mm = 70
